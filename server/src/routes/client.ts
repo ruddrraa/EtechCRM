@@ -1,0 +1,13 @@
+import { Router } from 'express'
+import { deleteClient, getClients, patchClient, postClient } from '../controllers/client.js'
+import { requireAuth } from '../middleware/auth.js'
+import { requireRoles } from '../middleware/auth.js'
+import { validate } from '../middleware/validate.js'
+import { clientSchema } from '../validators/client.js'
+
+export const clientRouter = Router()
+clientRouter.use(requireAuth)
+clientRouter.get('/', getClients)
+clientRouter.post('/', validate(clientSchema), postClient)
+clientRouter.patch('/:id', requireRoles('SUPER_ADMIN', 'MARKETING_HEAD', 'ADMIN'), validate(clientSchema), patchClient)
+clientRouter.delete('/:id', requireRoles('SUPER_ADMIN'), deleteClient)

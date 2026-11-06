@@ -1,0 +1,13 @@
+import { Router } from 'express'
+import { login, logout, me, createUser, bootstrap, changePassword } from '../controllers/auth.js'
+import { requireAuth, requireRoles } from '../middleware/auth.js'
+import { validate } from '../middleware/validate.js'
+import { loginSchema, registerUserSchema, bootstrapSchema, passwordSchema } from '../validators/auth.js'
+
+export const authRouter = Router()
+authRouter.post('/login', validate(loginSchema), login)
+authRouter.post('/bootstrap', validate(bootstrapSchema), bootstrap)
+authRouter.post('/logout', requireAuth, logout)
+authRouter.post('/change-password', requireAuth, validate(passwordSchema), changePassword)
+authRouter.get('/me', requireAuth, me)
+authRouter.post('/users', requireAuth, requireRoles('SUPER_ADMIN', 'MARKETING_HEAD', 'ADMIN'), validate(registerUserSchema), createUser)

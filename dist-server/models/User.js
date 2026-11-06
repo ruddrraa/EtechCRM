@@ -1,0 +1,22 @@
+import { Schema, model } from 'mongoose';
+export const roles = ['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE', 'ADMIN', 'USER'];
+const userSchema = new Schema({
+    name: { type: String, required: true, trim: true, maxlength: 120 },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+    phone: { type: String, trim: true },
+    passwordHash: { type: String, required: true, select: false },
+    role: { type: String, enum: roles, required: true, default: 'MARKETING_EXECUTIVE', index: true },
+    designation: { type: String, trim: true, maxlength: 120 },
+    reportingTo: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    avatar: { type: String },
+    isActive: { type: Boolean, default: true, index: true },
+    isArchived: { type: Boolean, default: false, index: true },
+    tokenVersion: { type: Number, default: 0 },
+}, { timestamps: true, versionKey: false });
+userSchema.methods.toSafeObject = function () {
+    const object = this.toObject();
+    delete object.passwordHash;
+    return object;
+};
+userSchema.index({ reportingTo: 1, isActive: 1 });
+export const User = model('User', userSchema);

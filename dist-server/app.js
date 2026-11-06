@@ -1,0 +1,34 @@
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import express from 'express';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { isAllowedOrigin, requireSameOrigin } from './middleware/auth.js';
+import { errorHandler } from './middleware/error.js';
+import { authRouter } from './routes/auth.js';
+import { clientRouter } from './routes/client.js';
+import { visitRouter } from './routes/visit.js';
+import { reportRouter } from './routes/report.js';
+import { auditRouter } from './routes/audit.js';
+import { dashboardRouter } from './routes/dashboard.js';
+import { userRouter } from './routes/user.js';
+import { notificationRouter } from './routes/notification.js';
+export function createApp() {
+    const app = express();
+    app.use(helmet());
+    app.use(cors({ origin: (origin, callback) => callback(null, !origin || isAllowedOrigin(origin)), credentials: true }));
+    app.use(express.json({ limit: '1mb' }));
+    app.use(cookieParser());
+    app.use(requireSameOrigin);
+    app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 100 }), authRouter);
+    app.use('/api/clients', clientRouter);
+    app.use('/api/visits', visitRouter);
+    app.use('/api/reports', reportRouter);
+    app.use('/api/audit-logs', auditRouter);
+    app.use('/api/dashboard', dashboardRouter);
+    app.use('/api/users', userRouter);
+    app.use('/api/notifications', notificationRouter);
+    app.get('/api/health', (_req, res) => res.json({ success: true, data: { status: 'ok' } }));
+    app.use(errorHandler);
+    return app;
+}

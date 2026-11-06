@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { getVisitById, getVisits, postArrived, postCancel, postCheckIn, postComplete, postReschedule, postVisit } from '../controllers/visit.js';
+import { isExecutiveRole, requireAuth, requireRoles } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { cancelSchema, createVisitSchema, locationSchema, outcomeSchema, rescheduleSchema, selfAssignSchema } from '../validators/visit.js';
+export const visitRouter = Router();
+visitRouter.use(requireAuth);
+visitRouter.get('/', getVisits);
+visitRouter.get('/:id', getVisitById);
+visitRouter.post('/', (req, res, next) => validate(isExecutiveRole(req.authUser.role) ? selfAssignSchema : createVisitSchema)(req, res, next), postVisit);
+visitRouter.post('/:id/arrived', requireRoles('MARKETING_EXECUTIVE', 'USER'), postArrived);
+visitRouter.post('/:id/check-in', requireRoles('MARKETING_EXECUTIVE', 'USER'), validate(locationSchema), postCheckIn);
+visitRouter.post('/:id/complete', requireRoles('MARKETING_EXECUTIVE', 'USER'), validate(outcomeSchema.extend({ location: locationSchema })), postComplete);
+visitRouter.post('/:id/cancel', validate(cancelSchema), postCancel);
+visitRouter.post('/:id/reschedule', validate(rescheduleSchema), postReschedule);

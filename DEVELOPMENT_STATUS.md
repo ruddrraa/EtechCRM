@@ -68,6 +68,43 @@
 - Historical visits created before `marketingHeadAtAssignment` existed can only use the current executive reporting relationship as a fallback; no historical manager can be inferred without an assignment audit record.
 - Phase 3.2 exports, Phase 3.3 follow-up scheduling, Phase 3.4 Cloudinary media, and Phase 3.5 production hardening remain intentionally deferred.
 
+## Phase 3.2 - Advanced reports and export
+
+- Replaced the inline report query logic with a shared report service and validated Zod query schemas.
+- Added date presets and custom date ranges, status, client, category, Marketing Head, and executive filters with pagination and sorting.
+- Marketing Executives now receive only their own permitted report records; Marketing Heads remain restricted to their current team.
+- Added client-wise and staff-wise summary reports with completion, pending, cancellation, follow-up, and last-visit metrics.
+- Added expandable visit histories with historical Marketing Head attribution, lifecycle timestamps, GPS coordinates, unavailable-location display, remarks, and follow-up dates.
+- Added secure complete-dataset CSV, XLSX, and PDF exports using the same server-side scope and filters as on-screen reports.
+- Added CSV/XLSX formula-injection protection, UTF-8 CSV output, XLSX Summary and Report sheets, PDF branding/filter metadata, page numbering, and long-report page handling.
+- Preserved compatibility endpoints for `/reports/overview`, `/reports/clients`, and `/reports/staff`.
+
+### Phase 3.2 verification
+
+- `npm run build` passed
+- `npm run build:server` passed
+- `npm run lint` passed
+- `npm run test:server` passed: 18 tests
+- `npm run test` remains unavailable because no `test` script exists in `package.json`
+
+### Phase 3.2 dependencies
+
+- Added `xlsx` for server-generated XLSX workbooks.
+- Added `pdfkit` and `@types/pdfkit` for server-generated PDF reports.
+
+### Phase 3.2 limitations
+
+- PDF reports use a compact row layout rather than a multi-column visual table to remain readable on narrow pages.
+- Historical attribution for legacy visits without `marketingHeadAtAssignment` still falls back to the executive's current manager because no historical assignment event exists.
+
+## Phase 3.2 report correction
+
+- Restored Client Wise and Staff Wise reports to individual visit-level rows with the original detailed columns and status badges.
+- Kept advanced date, status, client, category, Marketing Head, executive, sorting, pagination, and reset filters.
+- Changed CSV, XLSX, and PDF exports to use the exact complete filtered visit dataset rather than grouped client/staff summaries.
+- PDF exports now use landscape A3 tables with wrapped cells, repeated headers, unavailable GPS em dashes, and page numbers.
+- Added regression assertions preventing aggregated summary rows from replacing visit records.
+
 ## Known limitations
 
 - Client field policy is documented from the current decision: organisation name, category, and address are required; contact person and notes are optional; phone or email is required.

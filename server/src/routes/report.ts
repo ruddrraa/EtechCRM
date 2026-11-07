@@ -1,107 +1,33 @@
 import { Router } from 'express'
+import type { Request } from 'express'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
+import { validateQuery } from '../middleware/validate.js'
 import { success } from '../utils/api.js'
-import { Visit } from '../models/Visit.js'
-import { Client } from '../models/Client.js'
-import { User } from '../models/User.js'
-import { AppError } from '../utils/errors.js'
-import mongoose from 'mongoose'
-import type { Request, Response } from 'express'
+import { exportReport, getReport, getVisitDetails } from '../services/report.js'
+import { exportQuerySchema, reportQuerySchema } from '../validators/report.js'
+import type { ReportQuery } from '../validators/report.js'
 
 export const reportRouter = Router()
-reportRouter.use(requireAuth, requireRoles('SUPER_ADMIN', 'MARKETING_HEAD', 'ADMIN'))
-async function teamMatch(req: Request) {
-  if (req.authUser!.role !== 'MARKETING_HEAD') return {}
-  const team = await User.find({ reportingTo: req.authUser!.id, role: { $in: ['MARKETING_EXECUTIVE', 'USER'] } }).select('_id').lean()
-  return { assignedTo: { $in: team.map((item) => item._id) } }
-}
-reportRouter.get('/overview', async (req, res) => {
-  const match = await teamMatch(req)
-  const [clients, staff] = await Promise.all([
-    Client.aggregate([
-      { $match: { isActive: true } },
-      { $lookup: { from: 'visits', let: { clientId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$client', '$$clientId'] }, ...match } }], as: 'visits' } },
-      { $project: { organisationName: 1, totalVisits: { $size: '$visits' }, completedVisits: { $size: { $filter: { input: '$visits', as: 'visit', cond: { $eq: ['$$visit.status', 'COMPLETED'] } } } } } },
-      { $sort: { organisationName: 1 } },
-    ]),
-    User.aggregate([
-      { $match: { isActive: true, role: { $in: ['MARKETING_EXECUTIVE', 'USER'] }, ...(req.authUser!.role === 'MARKETING_HEAD' ? { reportingTo: req.authUser!.id } : {}) } },
-      { $lookup: { from: 'visits', localField: '_id', foreignField: 'assignedTo', as: 'visits' } },
-      { $project: { name: 1, email: 1, totalVisits: { $size: '$visits' }, completedVisits: { $size: { $filter: { input: '$visits', as: 'visit', cond: { $eq: ['$$visit.status', 'COMPLETED'] } } } } } },
-      { $sort: { name: 1 } },
-    ]),
-  ])
-  return success(res, { clients, staff })
-})
-reportRouter.get('/clients', async (req, res) => success(res, await Client.aggregate([
-  { $match: { isActive: true } },
-  { $lookup: { from: 'visits', let: { clientId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$client', '$$clientId'] }, ...(await teamMatch(req)) } }], as: 'visits' } },
-  { $project: { organisationName: 1, totalVisits: { $size: '$visits' }, completedVisits: { $size: { $filter: { input: '$visits', as: 'visit', cond: { $eq: ['$$visit.status', 'COMPLETED'] } } } } } },
-  { $sort: { organisationName: 1 } },
-])))
-reportRouter.get('/staff', async (req, res) => success(res, await User.aggregate([
-  { $match: { isActive: true, role: { $in: ['MARKETING_EXECUTIVE', 'USER'] }, ...(req.authUser!.role === 'MARKETING_HEAD' ? { reportingTo: req.authUser!.id } : {}) } },
-  { $lookup: { from: 'visits', localField: '_id', foreignField: 'assignedTo', as: 'visits' } },
-  { $project: { name: 1, email: 1, totalVisits: { $size: '$visits' }, completedVisits: { $size: { $filter: { input: '$visits', as: 'visit', cond: { $eq: ['$$visit.status', 'COMPLETED'] } } } } } },
-  { $sort: { name: 1 } },
-])))
-async function visitReport(req: Request, res: Response, field: 'client' | 'assignedTo') {
-  const id = String(req.params[field === 'client' ? 'clientId' : 'userId'])
-  if (!mongoose.isValidObjectId(id)) throw new AppError(400, 'Invalid report filter')
-  const page = Math.max(1, Number(req.query.page) || 1)
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
-  const sortField = req.query.sort === 'clientName' ? 'clientName' : req.query.sort === 'executiveName' ? 'executiveName' : 'plannedDate'
-  const direction = req.query.order === 'asc' ? 1 : -1
-  const match = { [field]: new mongoose.Types.ObjectId(id), ...(await teamMatch(req)) }
-  const pipeline: mongoose.PipelineStage[] = [
-    { $match: match },
-    { $lookup: { from: 'clients', localField: 'client', foreignField: '_id', as: 'client' } },
-    { $unwind: '$client' },
-    { $lookup: { from: 'users', localField: 'assignedTo', foreignField: '_id', as: 'assignedTo' } },
-    { $unwind: '$assignedTo' },
-    { $lookup: { from: 'users', localField: 'marketingHeadAtAssignment', foreignField: '_id', as: 'marketingHead' } },
-    { $unwind: { path: '$marketingHead', preserveNullAndEmptyArrays: true } },
-    { $addFields: { clientName: '$client.organisationName', executiveName: '$assignedTo.name', marketingHeadName: '$marketingHead.name' } },
-    { $sort: { [sortField]: direction, _id: -1 } as Record<string, 1 | -1> },
-    { $facet: {
-      items: [{ $skip: (page - 1) * limit }, { $limit: limit }],
-      total: [{ $count: 'value' }],
-    } },
-  ]
-  const [result] = await Visit.aggregate(pipeline)
-  const total = result?.total?.[0]?.value ?? 0
-  return success(res, { items: result?.items ?? [], page, limit, total, pages: Math.ceil(total / limit) })
-}
-async function listVisitReport(req: Request, res: Response, field: 'client' | 'assignedTo') {
-  const filterId = field === 'client' ? req.query.clientId : req.query.staffId
-  const filter = typeof filterId === 'string' && filterId ? filterId : undefined
-  if (filter && !mongoose.isValidObjectId(filter)) throw new AppError(400, 'Invalid report filter')
-  const page = Math.max(1, Number(req.query.page) || 1)
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
-  const sortField = req.query.sort === 'clientName' ? 'clientName' : req.query.sort === 'executiveName' ? 'executiveName' : 'plannedDate'
-  const direction = req.query.order === 'asc' ? 1 : -1
-  const pipeline: mongoose.PipelineStage[] = [
-    { $match: await teamMatch(req) },
-    ...(filter ? [{ $match: { [field]: new mongoose.Types.ObjectId(filter) } }] : []),
-    { $lookup: { from: 'clients', localField: 'client', foreignField: '_id', as: 'client' } },
-    { $unwind: '$client' },
-    { $lookup: { from: 'users', localField: 'assignedTo', foreignField: '_id', as: 'assignedTo' } },
-    { $unwind: '$assignedTo' },
-    { $lookup: { from: 'users', localField: 'marketingHeadAtAssignment', foreignField: '_id', as: 'marketingHead' } },
-    { $unwind: { path: '$marketingHead', preserveNullAndEmptyArrays: true } },
-    { $addFields: { clientName: '$client.organisationName', executiveName: '$assignedTo.name', marketingHeadName: '$marketingHead.name' } },
-    { $sort: { [sortField]: direction, _id: -1 } as Record<string, 1 | -1> },
-    { $facet: {
-      items: [{ $skip: (page - 1) * limit }, { $limit: limit }],
-      total: [{ $count: 'value' }],
-    } },
-  ]
-  const [result] = await Visit.aggregate(pipeline)
-  const total = result?.total?.[0]?.value ?? 0
-  return success(res, { items: result?.items ?? [], page, limit, total, pages: Math.ceil(total / limit) })
-}
+reportRouter.use(requireAuth, requireRoles('SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE', 'ADMIN', 'USER'))
 
-reportRouter.get('/client', async (req, res) => listVisitReport(req, res, 'client'))
-reportRouter.get('/staff/records', async (req, res) => listVisitReport(req, res, 'assignedTo'))
-reportRouter.get('/client/:clientId', async (req, res) => visitReport(req, res, 'client'))
-reportRouter.get('/staff/:userId', async (req, res) => visitReport(req, res, 'assignedTo'))
+const query = (req: Request) => reportQuerySchema.parse(req.query) as ReportQuery
+reportRouter.get('/overview', validateQuery(reportQuerySchema), async (req, res) => {
+  const parsed = query(req)
+  const [clients, staff] = await Promise.all([getReport(req.authUser!, parsed, 'client'), getReport(req.authUser!, parsed, 'staff')])
+  return success(res, { clients: clients.items, staff: staff.items })
+})
+reportRouter.get('/clients', validateQuery(reportQuerySchema), async (req, res) => success(res, (await getReport(req.authUser!, query(req), 'client')).items))
+reportRouter.get('/staff', validateQuery(reportQuerySchema), async (req, res) => success(res, (await getReport(req.authUser!, query(req), 'staff')).items))
+reportRouter.get('/client', validateQuery(reportQuerySchema), async (req, res) => success(res, await getReport(req.authUser!, query(req), 'client')))
+reportRouter.get('/staff/records', validateQuery(reportQuerySchema), async (req, res) => success(res, await getReport(req.authUser!, query(req), 'staff')))
+reportRouter.get('/client/:clientId', validateQuery(reportQuerySchema), async (req, res) => success(res, await getVisitDetails(req.authUser!, query(req), 'client', String(req.params.clientId))))
+reportRouter.get('/staff/:userId', validateQuery(reportQuerySchema), async (req, res) => success(res, await getVisitDetails(req.authUser!, query(req), 'assignedTo', String(req.params.userId))))
+reportRouter.get('/export', validateQuery(exportQuerySchema), async (req, res) => {
+  const parsed = query(req)
+  const view = String(req.query.view) as 'client' | 'staff'
+  const format = String(req.query.format) as 'csv' | 'xlsx' | 'pdf'
+  const result = await exportReport(req.authUser!, parsed, view, format)
+  res.setHeader('Content-Type', result.contentType)
+  res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`)
+  return res.send(result.body)
+})

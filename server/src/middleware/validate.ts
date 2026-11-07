@@ -13,7 +13,9 @@ export function validate(schema: ZodTypeAny) {
 export function validateQuery(schema: ZodTypeAny) {
   return (req: Request, _res: Response, next: NextFunction) => {
     try {
-      schema.parse(req.query)
+      const parsed = schema.parse(req.query) as Record<string, unknown>
+      Object.keys(req.query).forEach((key) => delete req.query[key])
+      Object.assign(req.query, parsed)
       next()
     } catch (error) { next(error) }
   }

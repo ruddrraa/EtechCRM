@@ -26,7 +26,7 @@ export function App() {
     <Route path="/clients" element={module('clients', ['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'])} />
     <Route path="/visits" element={module('visits', ['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'])} />
     <Route path="/staff" element={module('staff', ['SUPER_ADMIN', 'MARKETING_HEAD'])} />
-    <Route path="/reports" element={user.role === 'SUPER_ADMIN' || user.role === 'MARKETING_HEAD' ? <ReportsPage /> : <ErrorState description="Reports are restricted to Marketing Heads and Super Admins." />} />
+    <Route path="/reports" element={['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'].includes(user.role) ? <ReportsPage /> : <ErrorState description="Reports are restricted to authorised staff." />} />
     <Route path="/audit-logs" element={module('audit-logs', ['SUPER_ADMIN', 'MARKETING_HEAD'])} />
     <Route path="/settings" element={module('settings', ['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'])} />
     <Route path="*" element={<Navigate to="/" replace />} />

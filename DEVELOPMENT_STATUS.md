@@ -46,6 +46,28 @@
 - Approved exports and notification integrations, if still in scope
 - Final policy decisions and acceptance testing against live data
 
+## Phase 3.1 - Advanced dashboard analytics
+
+- Added a server-side `/api/dashboard` analytics response with validated date presets: today, this week, this month, last month, and custom ranges.
+- Added role-scoped KPIs for Super Admin, Marketing Head, and Marketing Executive users.
+- Added visit trends, completion rates, pending/cancelled visits, follow-up status counts, top visited clients, upcoming visits, recent completed visits, and role-appropriate performance breakdowns.
+- Super Admin Marketing Head performance uses `marketingHeadAtAssignment` with a legacy fallback to the executive's current reporting relationship.
+- Added frontend date-range controls, KPI cards, trend/performance/coverage charts, schedule and completed-visit states, and empty/error/loading handling.
+- Added regression coverage for organisation-wide metrics, Marketing Head team isolation, executive self-scope, and custom date filtering.
+
+### Phase 3.1 verification
+
+- `npm run build` passed
+- `npm run build:server` passed
+- `npm run lint` passed
+- `npm run test:server` passed: 16 tests
+- `npm run test` is not defined in `package.json`
+
+### Phase 3.1 remaining limitations
+
+- Historical visits created before `marketingHeadAtAssignment` existed can only use the current executive reporting relationship as a fallback; no historical manager can be inferred without an assignment audit record.
+- Phase 3.2 exports, Phase 3.3 follow-up scheduling, Phase 3.4 Cloudinary media, and Phase 3.5 production hardening remain intentionally deferred.
+
 ## Known limitations
 
 - Client field policy is documented from the current decision: organisation name, category, and address are required; contact person and notes are optional; phone or email is required.

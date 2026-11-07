@@ -9,3 +9,14 @@ export function validate(schema) {
         }
     };
 }
+export function validateQuery(schema) {
+    return (req, _res, next) => {
+        try {
+            schema.parse(req.query);
+            next();
+        }
+        catch (error) {
+            next(error);
+        }
+    };
+}

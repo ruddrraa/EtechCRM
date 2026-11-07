@@ -86,6 +86,60 @@ describe('security boundaries', () => {
     expect(assignment.status).toBe(201)
   })
 
+  it('scopes dashboard analytics by role and applies date filters', async () => {
+    const superAdmin = await createUser('SUPER_ADMIN', 'analytics-super@example.com')
+    const ram = await createUser('MARKETING_HEAD', 'analytics-ram@example.com')
+    const shyam = await createUser('MARKETING_HEAD', 'analytics-shyam@example.com')
+    const ramExecutive = await createUser('MARKETING_EXECUTIVE', 'analytics-ram-exec@example.com')
+    const shyamExecutive = await createUser('MARKETING_EXECUTIVE', 'analytics-shyam-exec@example.com')
+    await User.updateOne({ _id: ramExecutive._id }, { reportingTo: ram._id })
+    await User.updateOne({ _id: shyamExecutive._id }, { reportingTo: shyam._id })
+    const ramClient = await Client.create({ organisationName: 'Ram Analytics Clinic', category: 'Clinic', address: 'Road', email: 'ram-analytics@clinic.com', createdBy: ram._id })
+    const shyamClient = await Client.create({ organisationName: 'Shyam Analytics Clinic', category: 'Clinic', address: 'Road', email: 'shyam-analytics@clinic.com', createdBy: shyam._id })
+    await Visit.create([
+      { client: ramClient._id, assignedTo: ramExecutive._id, assignedBy: ram._id, source: 'ADMIN_ASSIGNED', plannedDate: new Date(), status: 'COMPLETED' },
+      { client: shyamClient._id, assignedTo: shyamExecutive._id, assignedBy: shyam._id, source: 'ADMIN_ASSIGNED', plannedDate: new Date(), status: 'ASSIGNED' },
+      { client: ramClient._id, assignedTo: ramExecutive._id, assignedBy: ram._id, source: 'ADMIN_ASSIGNED', plannedDate: new Date(Date.now() - 10 * 86400000), status: 'COMPLETED' },
+    ])
+    const [superLogin, ramLogin, shyamLogin, executiveLogin] = await Promise.all([
+      request(app).post('/api/auth/login').send({ email: superAdmin.email, password: 'password123' }),
+      request(app).post('/api/auth/login').send({ email: ram.email, password: 'password123' }),
+      request(app).post('/api/auth/login').send({ email: shyam.email, password: 'password123' }),
+      request(app).post('/api/auth/login').send({ email: ramExecutive.email, password: 'password123' }),
+    ])
+    const customStart = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
+    const customEnd = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+    const [superDashboard, ramDashboard, shyamDashboard, executiveDashboard] = await Promise.all([
+      request(app).get(`/api/dashboard?preset=custom&startDate=${customStart}&endDate=${customEnd}`).set('Cookie', superLogin.headers['set-cookie']),
+      request(app).get(`/api/dashboard?preset=custom&startDate=${customStart}&endDate=${customEnd}`).set('Cookie', ramLogin.headers['set-cookie']),
+      request(app).get(`/api/dashboard?preset=custom&startDate=${customStart}&endDate=${customEnd}`).set('Cookie', shyamLogin.headers['set-cookie']),
+      request(app).get(`/api/dashboard?preset=custom&startDate=${customStart}&endDate=${customEnd}`).set('Cookie', executiveLogin.headers['set-cookie']),
+    ])
+    expect(superDashboard.status).toBe(200)
+    expect(superDashboard.body.data.metrics.assignedVisits).toBe(2)
+    expect(superDashboard.body.data.headPerformance.map((item: { name: string }) => item.name)).toEqual(expect.arrayContaining([ram.name, shyam.name]))
+    expect(ramDashboard.body.data.metrics.assignedVisits).toBe(1)
+    expect(ramDashboard.body.data.executivePerformance.map((item: { name: string }) => item.name)).toEqual([ramExecutive.name])
+    expect(shyamDashboard.body.data.metrics.assignedVisits).toBe(1)
+    expect(shyamDashboard.body.data.executivePerformance.map((item: { name: string }) => item.name)).toEqual([shyamExecutive.name])
+    expect(executiveDashboard.body.data.metrics.assignedVisits).toBe(1)
+    expect(executiveDashboard.body.data.topClients.map((item: { name: string }) => item.name)).toEqual([ramClient.organisationName])
+  })
+
+  it('creates a Marketing Head without a reporting manager', async () => {
+    const superAdmin = await createUser('SUPER_ADMIN', 'create-head-super@example.com')
+    const login = await request(app).post('/api/auth/login').send({ email: superAdmin.email, password: 'password123' })
+    const response = await request(app).post('/api/auth/users').set('Cookie', login.headers['set-cookie']).send({
+      name: 'New Marketing Head',
+      email: 'new-head@example.com',
+      password: 'password123',
+      role: 'MARKETING_HEAD',
+      designation: 'Regional Marketing Head',
+    })
+    expect(response.status).toBe(201)
+    expect(response.body.data.reportingTo).toBeNull()
+  })
+
   it('rejects unauthenticated protected requests', async () => {
     const response = await request(app).get('/api/visits')
     expect(response.status).toBe(401)

@@ -9,3 +9,12 @@ export function validate(schema: ZodTypeAny) {
     } catch (error) { next(error) }
   }
 }
+
+export function validateQuery(schema: ZodTypeAny) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      schema.parse(req.query)
+      next()
+    } catch (error) { next(error) }
+  }
+}

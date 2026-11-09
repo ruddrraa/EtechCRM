@@ -193,7 +193,7 @@ describe('security boundaries', () => {
   it('enforces visit lifecycle and prevents Admin from creating another Admin', async () => {
     const executive = await createUser('USER', 'exec@example.com')
     const admin = await createUser('ADMIN', 'admin@example.com')
-    const client = await Client.create({ organisationName: 'Lifecycle Clinic', category: 'Clinic', address: 'Road', email: 'clinic@example.com', createdBy: admin._id })
+    const client = await Client.create({ organisationName: 'Lifecycle Clinic', category: 'Clinic', address: 'Road', latitude: 22.5726, longitude: 88.3639, email: 'clinic@example.com', createdBy: admin._id })
     const login = await request(app).post('/api/auth/login').send({ email: 'exec@example.com', password: 'password123' })
     const visit = await request(app).post('/api/visits').set('Cookie', login.headers['set-cookie']).send({ clientId: String(client._id), plannedDate: new Date().toISOString() })
     expect(visit.status).toBe(201)
@@ -201,9 +201,9 @@ describe('security boundaries', () => {
     expect(arrived.status).toBe(200)
     expect(arrived.body.data.status).toBe('ARRIVED')
     expect(arrived.body.data.arrivedAt).toBeTruthy()
-    const checkIn = await request(app).post(`/api/visits/${visit.body.data._id}/check-in`).set('Cookie', login.headers['set-cookie']).send({ locationStatus: 'LOCATION_UNAVAILABLE' })
+    const checkIn = await request(app).post(`/api/visits/${visit.body.data._id}/check-in`).set('Cookie', login.headers['set-cookie']).send({ latitude: 22.5726, longitude: 88.3639, accuracy: 10, locationStatus: 'AVAILABLE' })
     expect(checkIn.status).toBe(200)
-    const complete = await request(app).post(`/api/visits/${visit.body.data._id}/complete`).set('Cookie', login.headers['set-cookie']).send({ remarks: 'Discussed next steps', location: { locationStatus: 'LOCATION_UNAVAILABLE' } })
+    const complete = await request(app).post(`/api/visits/${visit.body.data._id}/complete`).set('Cookie', login.headers['set-cookie']).send({ remarks: 'Discussed next steps', location: { latitude: 22.5726, longitude: 88.3639, locationStatus: 'AVAILABLE' } })
     expect(complete.status).toBe(200)
     expect(complete.body.data.status).toBe('COMPLETED')
     const adminLogin = await request(app).post('/api/auth/login').send({ email: 'admin@example.com', password: 'password123' })
@@ -273,6 +273,22 @@ describe('security boundaries', () => {
     expect((await request(app).post('/api/auth/login').send({ email: executive.email, password: 'password123' })).status).toBe(401)
     expect((await request(app).get('/api/users').set('Cookie', superLogin.headers['set-cookie'])).body.data.some((item: { _id: string }) => item._id === String(executive._id))).toBe(false)
     expect(await Visit.exists({ _id: historicalVisit._id })).toBeTruthy()
+
+    // Re-creating or inviting a previously archived staff member restores and updates the account
+    const restored = await request(app).post('/api/auth/users').set('Cookie', superLogin.headers['set-cookie']).send({
+      name: 'Reinstated Executive',
+      email: executive.email,
+      password: 'newpassword123',
+      role: 'MARKETING_EXECUTIVE',
+      reportingTo: String(admin._id),
+      designation: 'Senior Executive',
+    })
+    expect(restored.status).toBe(201)
+    expect(restored.body.data.name).toBe('Reinstated Executive')
+    expect(restored.body.data.isActive).toBe(true)
+    expect((await request(app).get('/api/users').set('Cookie', superLogin.headers['set-cookie'])).body.data.some((item: { _id: string }) => item._id === String(executive._id))).toBe(true)
+    const reinstatedLogin = await request(app).post('/api/auth/login').send({ email: executive.email, password: 'newpassword123' })
+    expect(reinstatedLogin.status).toBe(200)
   })
 
   it('returns paginated all-record reports and applies permitted filters', async () => {

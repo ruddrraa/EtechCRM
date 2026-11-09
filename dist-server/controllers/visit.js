@@ -1,4 +1,4 @@
-import { cancel, checkIn, complete, createAssignedVisit, getVisit, listVisits, markArrived, reschedule, selfAssignVisit } from '../services/visit.js';
+import { authorizeException, cancel, checkIn, complete, createAssignedVisit, getVisit, listVisits, markArrived, reschedule, selfAssignVisit } from '../services/visit.js';
 import { success } from '../utils/api.js';
 import { isExecutiveRole } from '../middleware/auth.js';
 export async function getVisits(req, res) {
@@ -14,3 +14,6 @@ export async function postArrived(req, res) { return success(res, await markArri
 export async function postComplete(req, res) { return success(res, await complete(String(req.params.id), { ...req.body, location: req.body.location }, req.authUser)); }
 export async function postCancel(req, res) { return success(res, await cancel(String(req.params.id), req.body.reason, req.authUser)); }
 export async function postReschedule(req, res) { return success(res, await reschedule(String(req.params.id), req.body.plannedDate, req.authUser)); }
+export async function postAuthorizeException(req, res) {
+    return success(res, await authorizeException(String(req.params.id), req.body.reason, req.authUser));
+}

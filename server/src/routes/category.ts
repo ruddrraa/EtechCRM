@@ -1,0 +1,15 @@
+import { Router } from 'express'
+import { getCategories, patchCategory, postCategory, removeCategory } from '../controllers/category.js'
+import { requireAuth, requireRoles } from '../middleware/auth.js'
+import { validate } from '../middleware/validate.js'
+import { createCategorySchema, updateCategorySchema } from '../validators/category.js'
+
+export const categoryRouter = Router()
+
+categoryRouter.use(requireAuth)
+
+categoryRouter.get('/', getCategories)
+categoryRouter.post('/', requireRoles('SUPER_ADMIN'), validate(createCategorySchema), postCategory)
+categoryRouter.patch('/:id', requireRoles('SUPER_ADMIN'), validate(updateCategorySchema), patchCategory)
+categoryRouter.delete('/:id', requireRoles('SUPER_ADMIN'), removeCategory)
+

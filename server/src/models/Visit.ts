@@ -3,8 +3,25 @@ import { Schema, model } from 'mongoose'
 const locationSchema = new Schema({
   latitude: { type: Number, min: -90, max: 90 },
   longitude: { type: Number, min: -180, max: 180 },
+  accuracy: { type: Number, min: 0 },
   recordedAt: { type: Date },
   locationStatus: { type: String, enum: ['AVAILABLE', 'LOCATION_UNAVAILABLE'], required: true },
+  distanceFromClient: { type: Number },
+  allowedRadius: { type: Number },
+  verificationStatus: {
+    type: String,
+    enum: [
+      'VERIFIED',
+      'OUTSIDE_GEOFENCE',
+      'LOCATION_UNAVAILABLE',
+      'ACCURACY_INSUFFICIENT',
+      'STALE_GPS',
+      'EXCEPTION_APPROVED',
+      'MISSING_CLIENT_COORDINATES',
+    ],
+  },
+  exceptionReason: { type: String, trim: true, maxlength: 1000 },
+  exceptionApprovedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 }, { _id: false })
 
 const visitSchema = new Schema({
@@ -20,10 +37,16 @@ const visitSchema = new Schema({
   cancellationReason: { type: String, trim: true, maxlength: 1000 },
   cancelledBy: { type: Schema.Types.ObjectId, ref: 'User' },
   cancelledAt: { type: Date },
+  exceptionAuthorized: { type: Boolean, default: false },
+  exceptionAuthorizedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  exceptionAuthorizedAt: { type: Date },
+  exceptionReason: { type: String, trim: true, maxlength: 1000 },
   checkIn: locationSchema,
   checkOut: locationSchema,
   remarks: { type: String, trim: true, maxlength: 5000 },
   followUpDate: { type: Date },
+  photoAssets: [{ type: Schema.Types.ObjectId, ref: 'FileAsset' }],
+  attachmentAssets: [{ type: Schema.Types.ObjectId, ref: 'FileAsset' }],
 }, { timestamps: true, versionKey: false })
 
 visitSchema.index({ assignedTo: 1, plannedDate: -1 })

@@ -62,7 +62,7 @@ async function visitPipeline(user, query, extra = {}) {
         { $lookup: { from: 'users', localField: 'assignedTo.reportingTo', foreignField: '_id', as: 'currentHead' } },
         { $unwind: { path: '$currentHead', preserveNullAndEmptyArrays: true } },
         { $addFields: { marketingHead: { $ifNull: ['$historicalHead', '$currentHead'] }, marketingHeadId: { $ifNull: ['$marketingHeadAtAssignment', '$assignedTo.reportingTo'] } } },
-        ...(query.category ? [{ $match: { 'client.category': query.category } }] : []),
+        ...(query.categoryId ? [{ $match: { 'client.categoryId': objectId(query.categoryId) } }] : query.category ? [{ $match: { $or: [{ 'client.category': query.category }, ...(mongoose.isValidObjectId(query.category) ? [{ 'client.categoryId': objectId(query.category) }] : [])] } }] : []),
         ...(query.headId ? [{ $match: { marketingHeadId: objectId(query.headId) } }] : []),
     ];
     return pipeline;
@@ -83,7 +83,8 @@ function statusSummary(visits) {
         return summary;
     }, { total: 0, completed: 0, pending: 0, cancelled: 0 });
 }
-export async function getReport(user, query, _view) {
+export async function getReport(user, query, view) {
+    void view;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const pipeline = await visitPipeline(user, query);

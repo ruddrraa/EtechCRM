@@ -1,6 +1,6 @@
 import { z } from 'zod';
 const objectId = z.string().regex(/^[a-f\d]{24}$/i);
-const statuses = ['ASSIGNED', 'ARRIVED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED'];
+const statuses = ['ASSIGNED', 'COMPLETED', 'CANCELLED'];
 export const reportQuerySchema = z.object({
     preset: z.enum(['today', 'this_week', 'this_month', 'last_month', 'custom']).optional(),
     startDate: z.string().optional(),
@@ -8,6 +8,7 @@ export const reportQuerySchema = z.object({
     status: z.enum(statuses).optional(),
     clientId: objectId.optional(),
     category: z.string().trim().max(100).optional(),
+    categoryId: objectId.optional(),
     headId: objectId.optional(),
     staffId: objectId.optional(),
     page: z.coerce.number().int().min(1).max(100000).optional(),

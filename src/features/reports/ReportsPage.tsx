@@ -8,17 +8,19 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../auth/AuthContext'
 
 type Option = { _id: string; name?: string; organisationName?: string; category?: string; designation?: string }
-type Location = { latitude?: number; longitude?: number; recordedAt?: string; locationStatus?: string }
+type Location = { latitude?: number; longitude?: number; recordedAt?: string; locationStatus?: string; verificationStatus?: string; distanceFromClient?: number }
 type Visit = { _id: string; client: Option & { address?: string }; assignedTo: Option; marketingHead?: { name?: string }; plannedDate: string; status: string; checkIn?: Location; checkOut?: Location; remarks?: string; followUpDate?: string }
 type ReportResponse = { items: Visit[]; page: number; pages: number; total: number }
 const presets = [['today', 'Today'], ['this_week', 'This week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['custom', 'Custom range']] as const
-const statuses = ['', 'ASSIGNED', 'ARRIVED', 'CHECKED_IN', 'COMPLETED', 'CANCELLED']
+const statuses = ['', 'ASSIGNED', 'COMPLETED', 'CANCELLED']
 
 function timeText(value?: string) { return value ? new Date(value).toLocaleString() : '—' }
 function locationText(value?: Location) {
   if (!value || value.locationStatus === 'LOCATION_UNAVAILABLE') return '—'
   if (value.latitude === undefined || value.longitude === undefined) return '—'
-  return `${value.latitude.toFixed(5)}, ${value.longitude.toFixed(5)}`
+  const dist = typeof value.distanceFromClient === 'number' ? ` (${value.distanceFromClient}m)` : ''
+  const status = value.verificationStatus ? ` · ${value.verificationStatus}` : ''
+  return `${value.latitude.toFixed(5)}, ${value.longitude.toFixed(5)}${dist}${status}`
 }
 
 export function ReportsPage() {
@@ -44,6 +46,7 @@ export function ReportsPage() {
   const clients = useQuery({ queryKey: ['report-options', 'clients'], queryFn: () => apiFetch<{ items: Option[] }>('/clients?limit=100') })
   const staff = useQuery({ queryKey: ['report-options', 'staff', user?.role], enabled: canFilterStaff, queryFn: () => apiFetch<Option[]>('/users?role=MARKETING_EXECUTIVE&activeOnly=true') })
   const heads = useQuery({ queryKey: ['report-options', 'heads'], enabled: canFilterHeads, queryFn: () => apiFetch<Option[]>('/users?role=MARKETING_HEAD&activeOnly=true') })
+  const categoriesQuery = useQuery({ queryKey: ['report-options', 'categories'], queryFn: () => apiFetch<Array<{ _id: string; name: string }>>('/categories') })
   const params = new URLSearchParams({ preset, page: String(page), limit: '20', sort, order })
   if (clientId) params.set('clientId', clientId)
   if (staffId) params.set('staffId', staffId)
@@ -54,7 +57,11 @@ export function ReportsPage() {
   const report = useQuery({ queryKey: ['report', segment, params.toString()], enabled: preset !== 'custom' || Boolean(startDate && endDate), queryFn: () => apiFetch<ReportResponse>(`/reports/${segment === 'staff' ? 'staff/records' : 'client'}?${params.toString()}`) })
   const clientOptions = useMemo(() => (clients.data?.items ?? []).filter((item) => String(item.organisationName).toLowerCase().includes(clientSearch.toLowerCase())), [clients.data, clientSearch])
   const staffOptions = useMemo(() => (staff.data ?? []).filter((item) => String(item.name).toLowerCase().includes(staffSearch.toLowerCase())), [staff.data, staffSearch])
-  const categories = useMemo(() => [...new Set((clients.data?.items ?? []).map((item) => item.category).filter(Boolean))], [clients.data])
+  const categories = useMemo(() => {
+    const fromMaster = (categoriesQuery.data ?? []).map((item) => item.name).filter(Boolean) as string[]
+    if (fromMaster.length > 0) return fromMaster
+    return [...new Set((clients.data?.items ?? []).map((item) => item.category).filter(Boolean))] as string[]
+  }, [categoriesQuery.data, clients.data])
   const reset = () => { setPreset('this_month'); setStartDate(''); setEndDate(''); setStatus(''); setCategory(''); setClientId(''); setStaffId(''); setHeadId(''); setClientSearch(''); setStaffSearch(''); setPage(1) }
   const changeSort = (next: typeof sort) => { setOrder(sort === next && order === 'desc' ? 'asc' : 'desc'); setSort(next); setPage(1) }
   async function download(format: 'csv' | 'xlsx' | 'pdf') {

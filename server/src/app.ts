@@ -13,6 +13,10 @@ import { auditRouter } from './routes/audit.js'
 import { dashboardRouter } from './routes/dashboard.js'
 import { userRouter } from './routes/user.js'
 import { notificationRouter } from './routes/notification.js'
+import { categoryRouter } from './routes/category.js'
+import { mapsRouter } from './routes/maps.js'
+import { settingRouter } from './routes/setting.js'
+import { fileRouter } from './routes/file.js'
 
 export function createApp() {
   const app = express()
@@ -29,6 +33,10 @@ export function createApp() {
   app.use('/api/dashboard', dashboardRouter)
   app.use('/api/users', userRouter)
   app.use('/api/notifications', notificationRouter)
+  app.use('/api/categories', categoryRouter)
+  app.use('/api/maps', mapsRouter)
+  app.use('/api/settings', settingRouter)
+  app.use('/api/files', fileRouter)
   app.get('/api/health', (_req, res) => res.json({ success: true, data: { status: 'ok' } }))
   app.use(errorHandler)
   return app

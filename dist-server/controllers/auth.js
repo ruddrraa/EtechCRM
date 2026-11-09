@@ -49,8 +49,29 @@ export async function createUser(req, res) {
     else if (req.body.reportingTo) {
         throw new AppError(422, 'Marketing Heads cannot have a reporting manager');
     }
+    const normalizedEmail = req.body.email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+        if (!existingUser.isArchived) {
+            throw new AppError(409, 'A staff member with this email already exists');
+        }
+        // Re-activating and updating previously archived/deleted staff member
+        const passwordHash = await bcrypt.hash(req.body.password, 12);
+        existingUser.name = req.body.name;
+        existingUser.phone = req.body.phone;
+        existingUser.role = role;
+        existingUser.designation = req.body.designation;
+        existingUser.reportingTo = reportingTo;
+        existingUser.passwordHash = passwordHash;
+        existingUser.isActive = true;
+        existingUser.isArchived = false;
+        existingUser.tokenVersion = (existingUser.tokenVersion || 0) + 1;
+        await existingUser.save();
+        await recordAudit(actor.id, 'USER_CREATED', 'User', String(existingUser._id), { role: existingUser.role, restored: true });
+        return success(res, safeUser(existingUser), 201);
+    }
     const passwordHash = await bcrypt.hash(req.body.password, 12);
-    const user = await User.create({ ...req.body, role, passwordHash, reportingTo });
+    const user = await User.create({ ...req.body, email: normalizedEmail, role, passwordHash, reportingTo, isActive: true, isArchived: false });
     await recordAudit(actor.id, 'USER_CREATED', 'User', String(user._id), { role: user.role });
     return success(res, safeUser(user), 201);
 }

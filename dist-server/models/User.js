@@ -9,6 +9,7 @@ const userSchema = new Schema({
     designation: { type: String, trim: true, maxlength: 120 },
     reportingTo: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     avatar: { type: String },
+    avatarAsset: { type: Schema.Types.ObjectId, ref: 'FileAsset' },
     isActive: { type: Boolean, default: true, index: true },
     isArchived: { type: Boolean, default: false, index: true },
     tokenVersion: { type: Number, default: 0 },

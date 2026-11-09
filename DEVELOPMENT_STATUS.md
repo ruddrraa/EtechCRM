@@ -105,6 +105,78 @@
 - PDF exports now use landscape A3 tables with wrapped cells, repeated headers, unavailable GPS em dashes, and page numbers.
 - Added regression assertions preventing aggregated summary rows from replacing visit records.
 
+## Completed — Category Master, Ola Maps Address Autocomplete & Report Filter Cleanup
+
+### Category Master
+- Created a separate Mongoose `Category` model and collection with `name`, `normalizedName` (case-insensitive unique index), `isActive` (boolean, default true), `createdBy` (ref User), `updatedBy` (ref User), and automatic timestamps.
+- Enforced strict backend role-based permissions:
+  - Super Admin only can create categories (`POST /api/categories`), edit category names (`PATCH /api/categories/:id`), toggle active/deactivate status, and delete unreferenced categories (`DELETE /api/categories/:id`).
+  - Marketing Heads and Marketing Executives have read-only access to active categories (`GET /api/categories`).
+  - Hard deletion is blocked with HTTP 400 if any existing client references the category.
+- Added Category Management section in Settings for Super Admin users with active/inactive badges, real-time duplicate checks, edit modal, status toggle, and delete prevention.
+- Added safe, idempotent category migration (`migrateCategories`) in `server/src/services/migration.ts` that detects distinct existing categories, groups case-insensitive duplicates, creates Category master records, maps clients to their canonical category ID, and preserves all client data.
+- Client creation and editing forms now feature a searchable select dropdown sourced from `/api/categories?activeOnly=true`. Arbitrary categories are rejected on the server if categories exist. Inactive categories are rejected on client creation. When editing an existing client, their category is preserved.
+
+### Ola Maps Address Autocomplete
+- Integrated Ola Maps Places Autocomplete (`/places/v1/autocomplete`) and Place Details (`/places/v1/details`) via secure backend proxy endpoints (`/api/maps/autocomplete`, `/api/maps/details`).
+- Backend security:
+  - Stored `OLA_MAPS_API_KEY` exclusively in server environment variables; never exposed to Vite frontend or client builds.
+  - Proxy endpoints require session authentication (`requireAuth`) and validate input parameters (minimum 2 characters, sanitization).
+  - Outgoing requests use `AbortController` timeouts (5000ms) with error isolation; errors and 503s are caught and handled gracefully without crashing or leaking keys.
+  - Response payloads are sanitized DTOs (`placeId`, `mainText`, `secondaryText`, `latitude`, `longitude`, `formattedAddress`).
+- Frontend UX:
+  - Implemented `AddressAutocomplete` component with 350ms input debouncing, loading spinner, clear no-results feedback, and keyboard navigation (ArrowUp, ArrowDown, Enter, Escape).
+  - Selecting an autocomplete place populates formatted address and stores latitude, longitude, and placeId into Client records.
+  - Full manual fallback: users can type any address directly without selecting a place, preserving offline and manual entry when the API key is not configured or network fails.
+  - Visit check-in/checkout GPS coordinates remain completely separate from client address coordinates.
+
+### Report Status Filter Cleanup
+- Removed `ARRIVED` and `CHECKED_IN` options from report status filter dropdown on both Client Wise and Staff Wise views in `ReportsPage.tsx`.
+- Kept `All statuses`, `ASSIGNED`, `COMPLETED`, and `CANCELLED`.
+- Updated report query validation schema (`reportQuerySchema`) to reject `ARRIVED` and `CHECKED_IN` with validation error (HTTP 422).
+- Visit model schema, visit state transitions, and visit execution lifecycles (`ASSIGNED -> ARRIVED -> CHECKED_IN -> COMPLETED`) remain completely unchanged and operational.
+- Populated report category filter dropdown dynamically from `/api/categories`.
+
+### New Environment Variables
+- `OLA_MAPS_API_KEY`: API key for Ola Maps developer platform (`https://maps.olakrutrim.com/`). Optional in development; when omitted, address input operates in manual fallback mode without error.
+
+### New API Endpoints
+- `GET /api/categories`: List categories (Super Admin sees all or filtered by `activeOnly`; other roles receive active categories only).
+- `POST /api/categories`: Create category (Super Admin only, case-insensitive uniqueness check).
+- `PATCH /api/categories/:id`: Update category name or active status (Super Admin only).
+- `DELETE /api/categories/:id`: Hard-delete category (Super Admin only; rejected if referenced by clients).
+- `GET /api/maps/autocomplete`: Secure proxy for Ola Maps autocomplete query (`?input=...`).
+- `GET /api/maps/details`: Secure proxy for Ola Maps place details query (`?placeId=...`).
+
+### Verification & Testing
+- Total passing tests: **36 tests** (18 existing security/lifecycle tests + 18 new regression tests).
+- Regression test coverage in `server/tests/category-maps-report.test.ts`:
+  1. Super Admin can create categories.
+  2. Marketing Head cannot create categories (HTTP 403).
+  3. Marketing Executive cannot create categories (HTTP 403).
+  4. Duplicate category names rejected case-insensitively (HTTP 409).
+  5. Inactive categories cannot be selected for new clients (HTTP 400).
+  6. Existing clients retain their categories.
+  7. Category migration is safe to rerun and idempotent.
+  8. Categories referenced by clients cannot be deleted (HTTP 400).
+  9. Backend maps proxy works with valid configuration.
+  10. API key is never returned to frontend.
+  11. Invalid/empty maps queries are rejected (HTTP 400).
+  12. Provider errors handled gracefully.
+  13. Manual address entry continues to work when provider is unavailable.
+  14. Selecting a suggestion saves address and coordinates.
+  15. ARRIVED is not available as a report filter (HTTP 422).
+  16. CHECKED_IN is not available as a report filter (HTTP 422).
+  17. ASSIGNED, COMPLETED and CANCELLED remain available (HTTP 200).
+  18. Visit lifecycle functionality remains unchanged.
+- `npm run build`: Passed with 0 errors.
+- `npm run build:server`: Passed with 0 errors.
+- `npm run lint`: Passed with 0 errors.
+- `npm run test:server`: Passed with 36/36 tests passing.
+
+### Remaining Limitations
+- Live Ola Maps geocoding and autocomplete calls against `https://api.olamaps.io` require a valid, funded/active `OLA_MAPS_API_KEY` configured in the backend environment.
+
 ## Known limitations
 
 - Client field policy is documented from the current decision: organisation name, category, and address are required; contact person and notes are optional; phone or email is required.
@@ -338,3 +410,207 @@ Remaining limitations:
 - Made the Settings panel fetch and render `/users/me` through its own `profile/me` query, so Settings cannot display stale profile data from another component cache.
 - Added regression coverage confirming name and phone changes persist while email and role remain protected.
 - Verification: `npm run build`, `npm run lint`, and `npm run test:server` passed; the server suite now contains 15 tests.
+
+## Category Master, Ola Maps Autocomplete, Report Filter Cleanup & Staff Reinstatement
+
+### 1. Category Master
+- **Model**: Created `Category` collection (`server/src/models/Category.ts`) with `name`, `normalizedName` (lowercase unique index), `isActive` (boolean), `createdBy`, `updatedBy`, and timestamps.
+- **Permissions**:
+  - Super Admin: Full CRUD (create, update name, activate/deactivate, delete). Delete is blocked (400) if any client references the category.
+  - Marketing Heads & Marketing Executives: Read-only access to active categories (`GET /api/categories?activeOnly=true`).
+- **Client Integration**:
+  - Updated `Client` model with `categoryId` (ObjectId ref to Category).
+  - Searchable dropdown in client create/edit modal populated from active categories (`/api/categories?activeOnly=true`).
+  - Server validation verifies category ID exists and is active.
+- **Migration**:
+  - Added idempotent `migrateCategories()` in `server/src/services/migration.ts`.
+  - Migrates distinct client category strings to canonical `Category` records, normalizing case duplicates and updating clients with `categoryId`.
+- **UI**: Added **Category Management** section under Settings for Super Admin (`src/features/settings/CategorySettings.tsx`).
+
+### 2. Ola Maps Address Autocomplete
+- **Architecture**:
+  - Secure backend proxy at `GET /api/maps/autocomplete` and `GET /api/maps/details`.
+  - Stores `OLA_MAPS_API_KEY` strictly on the backend; never exposed to Vite frontend.
+  - 5-second timeout with `AbortController`, query parameter validation, and sanitized DTOs.
+- **Frontend UX**:
+  - Implemented `AddressAutocomplete.tsx` with 350ms debounce, loading indicator, keyboard navigation (Arrow Up/Down, Enter, Escape), clear empty state, and provider error fallback.
+  - Full manual address entry fallback supported at all times.
+  - Populates client `address`, `formattedAddress`, `latitude`, `longitude`, and `placeId`.
+
+### 3. Report Filter Cleanup
+- Removed `ARRIVED` and `CHECKED_IN` options from report status dropdowns in `ReportsPage.tsx` for both Client Wise and Staff Wise views.
+- Preserved options: `All statuses`, `ASSIGNED`, `COMPLETED`, `CANCELLED`.
+- Server-side validator (`server/src/validators/report.ts`) validates report status query parameters and rejects `ARRIVED` / `CHECKED_IN` with 422.
+- The `Visit` model and visit execution lifecycle (`ASSIGNED -> ARRIVED -> CHECKED_IN -> COMPLETED`) remain completely unchanged.
+
+### 4. Staff Reinstatement & Archival Conflict Resolution
+- **Issue**: Soft-deleting staff via "Delete staff" set `isArchived: true`. Subsequent invitations with the same email threw MongoDB duplicate key errors (11000) due to the unique index on `email`.
+- **Resolution**: Updated `createUser` in `server/src/controllers/auth.ts` to detect if an email belongs to an archived staff member. If archived, it reinstates and updates the account with new credentials, role, designation, and manager, preserving all historical visit references and immediately displaying them in the active staff directory.
+
+### 5. Verification & Tests
+- `npm run build`: Passed (0 errors).
+- `npm run build:server`: Passed (0 errors).
+- `npm run lint`: Passed (0 errors).
+- `npm run test:server`: All 36 tests passed (18 security + 18 category/maps/report/staff-restoration tests).
+- Phase 3.3 remains untouched as planned.
+
+## GPS Geofencing & Visit Location Verification
+
+### 1. Check-in Verification Policy
+- **High-Accuracy GPS**: Captures device GPS coordinates (`latitude`, `longitude`, `accuracy`, and `recordedAt`).
+- **Haversine Distance**: Server independently calculates great-circle distance between device GPS and registered client coordinates from Ola Maps. Frontend distance or verification claims are never trusted.
+- **Allowed Radius**: Default 50 meters (Super Admin configurable). Can be overridden per client via `client.geofenceRadius`.
+- **Enforcement Rules**:
+  - Distance $\le$ allowed radius and accuracy $\le$ 100m: Allows check-in with `verificationStatus: 'VERIFIED'`.
+  - Distance $>$ allowed radius: Rejects normal check-in with 422 error containing measured distance and allowed radius.
+  - GPS accuracy $>$ 100m: Rejects check-in (`ACCURACY_INSUFFICIENT`).
+  - Stale GPS ($>$ 5 minutes old) or invalid future timestamp: Rejects check-in (`STALE_GPS`).
+  - Missing client coordinates: Rejects check-in (`MISSING_CLIENT_COORDINATES`) unless authorized exception exists.
+  - Location unavailable: Rejects normal check-in without silent bypass (`LOCATION_UNAVAILABLE`).
+
+### 2. Check-out Policy
+- Captures departure GPS where available.
+- Calculates distance from client location independently.
+- Inside allowed radius: records `verificationStatus: 'VERIFIED'`.
+- Outside allowed radius (e.g. 500m or 1km away): **Check-out is never blocked**; records `verificationStatus: 'OUTSIDE_GEOFENCE'` and actual distance.
+- Location unavailable: records `verificationStatus: 'LOCATION_UNAVAILABLE'`.
+- Coordinates and timestamps are strictly recorded without fabrication.
+
+### 3. Database Schema Extensions
+- Extended `locationSchema` in `server/src/models/Visit.ts`:
+  - `accuracy`: number (in meters)
+  - `distanceFromClient`: number (in meters)
+  - `allowedRadius`: number (in meters, persisted at decision time)
+  - `verificationStatus`: enum (`VERIFIED`, `OUTSIDE_GEOFENCE`, `LOCATION_UNAVAILABLE`, `ACCURACY_INSUFFICIENT`, `STALE_GPS`, `EXCEPTION_APPROVED`, `MISSING_CLIENT_COORDINATES`)
+  - `exceptionReason`: string
+  - `exceptionApprovedBy`: ObjectId ref User
+- Preserved existing fields: `latitude`, `longitude`, `recordedAt`, `locationStatus`.
+- Added `geofenceRadius` (min 10, max 2000) to `Client.ts` for client-specific overrides.
+- Created `Setting` model (`server/src/models/Setting.ts`) for system-wide configuration.
+
+### 4. Audited Exception Path
+- Prevents silent bypass by Marketing Executives.
+- Super Admin and Marketing Heads (for their assigned team members) can authorize exceptions at `POST /api/visits/:id/authorize-exception`.
+- Executives check in with `allowException: true` only if pre-authorized; records `verificationStatus: 'EXCEPTION_APPROVED'`, `exceptionReason`, and `exceptionApprovedBy`.
+- Audit logs record `VISIT_EXCEPTION_AUTHORIZED` and `VISIT_CHECKED_IN_EXCEPTION`.
+
+### 5. UI Integration
+- **Check-in Modal** (`CheckInModal.tsx`): Displays client registered location, current device GPS, accuracy badge, distance from client, live verification preview, refresh GPS action, and authorized exception banner.
+- **Check-out Modal** (`CheckOutModal.tsx`): Displays departure distance, outside-geofence warning, location-unavailable fallback, meeting remarks, and non-blocking complete checkout button.
+- **Geofence Settings** (`GeofenceSettings.tsx`): Super Admin panel under Settings to configure default geofence radius (meters) and maximum allowed GPS accuracy (meters).
+- **Reports**: Displays coordinates, calculated distance, and verification status badges for check-in and check-out.
+
+### 6. Regression Testing
+- Added comprehensive test suite in `server/tests/geofence.test.ts` (14 tests):
+  1. Inside 20m: Verified check-in.
+  2. Inside 50m: Verified check-in at boundary.
+  3. Outside 50m: Rejection with measured distance error.
+  4. Poor GPS accuracy: Rejection when accuracy $>$ 100m.
+  5. Stale GPS: Rejection when timestamp $>$ 5 minutes old.
+  6. Missing client coordinates: Rejection when client has no GPS.
+  7. GPS unavailable: Rejection without silent bypass.
+  8. Checkout 500m away: Allowed with OUTSIDE_GEOFENCE and actual distance.
+  9. Checkout 1km away: Allowed with OUTSIDE_GEOFENCE and actual distance.
+  10. Tampered frontend distance: Recalculates true distance and rejects.
+  11. Unauthorized bypass: 403 Forbidden on unapproved exception.
+  12. Approved exception: Manager/Super Admin exception check-in and audit event.
+  13. Historical visit data preservation: Legacy visits remain valid.
+  14. Super Admin geofence radius configuration: Dynamic policy enforcement.
+- Verification:
+  - `npm run test:server`: **52/52 tests passed** (18 security + 18 category/maps/reports + 16 geofencing).
+  - `npm run build:server`: Passed (0 errors).
+  - `npm run lint`: Passed (0 errors).
+  - `npm run build`: Passed (0 errors).
+
+---
+
+## Client GPS Coordinate Persistence & Check-in Verification Fixes
+
+### 1. Root Cause Analysis
+- **Missing Coordinates in Visit Check-In**: In `server/src/services/visit.ts`, `listVisits` and `getVisit` projected only `'organisationName category address'`, omitting `latitude`, `longitude`, `geofenceRadius`, `formattedAddress`, and `placeId`. Even when a client had valid coordinates in MongoDB, the visit client payload lacked them, triggering `"Client has no registered GPS coordinates"`.
+- **GPS Accuracy Inconsistency**: High accuracy device GPS threshold is strictly 100m. When device GPS accuracy was poor (`±146m`), check-in could not reliably verify proximity within a 50m radius.
+- **Client Edit Coordinate Invalidation**: When manually modifying an address without choosing a new suggestion, stale coordinates could remain or fail schema validation if cleared.
+
+### 2. Implementation Details
+- **Visit Client Population**:
+  - Exported `CLIENT_POPULATE_FIELDS = 'organisationName category address latitude longitude geofenceRadius formattedAddress placeId'`.
+  - Updated `listVisits`, `getVisit`, `markArrived`, `checkIn`, `complete`, and `authorizeException` in `server/src/services/visit.ts` to include full client location data.
+- **Zod Validation & Coordinate Invalidation**:
+  - Updated `server/src/validators/client.ts` to allow `latitude`, `longitude`, `placeId`, `formattedAddress`, and `geofenceRadius` to be `.nullable().optional()`.
+  - Updated `ModulePage.tsx` client form handler: when address text changes manually without a suggestion, coordinates are explicitly set to `null` on submit to cleanly invalidate stale coordinates in MongoDB.
+- **Ola Maps Autocomplete & Device Location**:
+  - Added user-confirmed "Use current location" button in `AddressAutocomplete.tsx` with high-accuracy GPS capture.
+  - Added manual address change warning notification (`ℹ️ Address entered manually...`).
+- **Check-In Modal UX**:
+  - Separated missing client coordinates banner from poor GPS accuracy banner in `CheckInModal.tsx`.
+  - Added clear troubleshooting guidance for GPS accuracy ($> 100$m): step outdoors/near window, turn on high accuracy, and click Refresh GPS.
+  - Added contextual disabled button states (`Client GPS Missing`, `Accuracy Insufficient`, `Outside Geofence`).
+- **Staff Directory Display Fix**:
+  - Corrected role formatting in `ModulePage.tsx` so `SUPER_ADMIN` accounts display as `Super Admin` rather than defaulting to `Marketing Head`.
+- **Regression Tests**:
+  - Added Test 15: Population of `latitude`, `longitude`, `geofenceRadius`, `placeId`, `formattedAddress` in `listVisits` and `getVisit`.
+  - Added Test 16: Persistence on client creation, preservation on partial edit, and invalidation on manual edit.
+  - Total test suite: **52/52 tests passing**.
+
+---
+
+## Phase 3.4 — Centralized Cloud File Storage & Media Management
+
+### 1. Storage Architecture
+- **Provider Abstraction**: Implemented `IStorageProvider` interface (`upload`, `delete`, `getSignedUrl`) backed by `CloudinaryStorageProvider` for production cloud storage and `MockStorageProvider` for automated offline test suites.
+- **Strict Database Boundary**: MongoDB stores metadata and references only (`FileAsset`), never binary streams or base64 blobs.
+- **Private by Default**: All file assets are uploaded under authenticated private delivery with short-lived signed URLs generated dynamically after validating user permissions.
+- **Failure Cleanup & Resilience**: If MongoDB metadata persistence fails after a successful storage upload, the cloud asset is immediately deleted to prevent orphaned files.
+
+### 2. Supported File Types & Ownership
+- `USER_AVATAR`: Staff profile pictures (max 5MB, JPEG/PNG/WebP, magic bytes signature verified).
+- `CLIENT_VISITING_CARD`: Client visiting cards (max 10MB, Images/PDF).
+- `CLIENT_DOCUMENT`: Business documents & contracts (max 25MB, PDF/Images/Office docs).
+- `VISIT_PHOTO`: Site visit photographs (max 10MB, Images).
+- `VISIT_ATTACHMENT`: Visit meeting minutes & invoices (max 25MB, PDF/Images/Office docs).
+
+### 3. Security, RBAC & Team Boundaries
+- **Cross-Team Access Rejection**: Marketing Heads cannot access visit attachments or documents belonging to another Head's team (HTTP 403).
+- **Executive Isolation**: Marketing Executives can only access attachments for visits assigned to themselves.
+- **Filename Sanitization**: Path traversal and malicious characters are sanitized before storage.
+- **Upload Rate Limiting**: 60 uploads per 15-minute window via `express-rate-limit`.
+- **Full Audit Logging**: `FILE_UPLOADED`, `FILE_ACCESSED`, and `FILE_DELETED` events recorded in `auditevents`.
+
+### 4. Database Schema
+- Created Mongoose `FileAsset` model with indexes on `{ ownerType: 1, ownerId: 1, isArchived: 1 }`, `{ uploadedBy: 1, createdAt: -1 }`, and `{ cloudinaryPublicId: 1 }`.
+- Linked parent entities: `User.avatarAsset`, `Client.visitingCardAsset`, `Client.documentAssets`, `Visit.photoAssets`, `Visit.attachmentAssets`.
+
+### 5. Frontend & UI Integration
+- **Reusable `FileUpload` Component**: Drag-and-drop zone, file picker, file size/MIME validation, secure upload state, thumbnail previews, view/replace actions, and delete confirmation.
+- **Profile Modal**: Replaced text avatar input with drag-and-drop profile image upload.
+- **Client Modal**: Integrated visiting card and document uploads.
+- **Visit Detail**: Integrated site photo and meeting document uploads.
+- **Storage Dashboard**: Added Super Admin overview displaying total files, volume, category breakdown, and recent uploads.
+
+### 6. Verification & Test Coverage
+- Added `server/tests/storage.test.ts` (10 tests):
+  1. Unauthenticated upload rejection (HTTP 401).
+  2. Authenticated upload & metadata persistence (HTTP 201).
+  3. MIME type and magic bytes signature verification.
+  4. File size limit enforcement (HTTP 422).
+  5. Cross-team isolation between Marketing Heads (HTTP 403).
+  6. Executive isolation on peer visit attachments (HTTP 403).
+  7. Soft-deletion, storage removal, and audit recording.
+  8. Storage cleanup on database write failure.
+  9. Super Admin storage dashboard metrics and non-admin rejection.
+  10. Client visiting card and document attachment listing.
+- **Total Test Suite**: **62 / 62 tests passing** (18 security + 18 category/maps/reports + 16 geofencing + 10 storage).
+- **TypeScript & Lint**: `npm run build:server` (0 errors), `npm run build` (0 errors), `npm run lint` (0 errors).
+- Phase 3.5 remains intentionally deferred.
+
+### 7. Cloudinary Provider Activation & Mock URL Remediation
+- **Explicit Provider Selection**: Enforced strict provider selection logic. When valid Cloudinary credentials (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`) are present, `CloudinaryStorageProvider` is instantiated. Silent fallback to `MockStorageProvider` is forbidden; mock storage is only permitted when explicitly configured via `STORAGE_PROVIDER=mock` or in automated test environments (`NODE_ENV=test`).
+- **Startup Connectivity Verification**: Added `verifyStorageConnectivity()` which executes authenticated `cloudinary.api.ping()` upon server boot. Logs provider status and cloud name (`[Storage] Active Provider: CloudinaryStorageProvider (Cloud: <cloud_name>)`) without exposing sensitive API secrets.
+- **Signed CDN Delivery**: Configured authenticated short-lived delivery URLs via `cloudinary.url(..., { type: 'authenticated', sign_url: true, secure: true })`, verified returning HTTP 200 with Content-Type `image/png` directly from `res.cloudinary.com`.
+- **Legacy Mock Asset Remediation**: 
+  - Frontend `FileUpload` safely detects legacy mock assets (`mock-storage.local`), displays a clear informational amber warning (`Local mock asset detected. Please click Replace below to upload to Cloudinary`), and intercepts broken view clicks with guidance instead of triggering browser `DNS_PROBE_FINISHED_NXDOMAIN`.
+  - Topbar and profile cards guard against unresolvable `mock-storage.local` images, rendering clean user initials until the user replaces the avatar.
+  - End-to-end verified live upload, signed URL delivery, and deletion against the running server.
+
+
+

@@ -4,9 +4,14 @@ import { migrateLegacyRoles } from '../services/migration.js'
 
 let connectionPromise: Promise<typeof mongoose> | null = null
 
-export function connectDatabase() {
+mongoose.connection.on('disconnected', () => {
+  connectionPromise = null
+})
+
+export function connectDatabase(uri?: string) {
+  const targetUri = uri || process.env.MONGODB_URI || env.MONGODB_URI
   if (mongoose.connection.readyState === 1) return Promise.resolve(mongoose)
-  connectionPromise ??= mongoose.connect(env.MONGODB_URI).then(async (connection) => {
+  connectionPromise ??= mongoose.connect(targetUri).then(async (connection) => {
     await migrateLegacyRoles()
     return connection
   })

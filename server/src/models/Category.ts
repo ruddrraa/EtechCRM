@@ -2,7 +2,7 @@ import { Schema, model, type HydratedDocument } from 'mongoose'
 
 const categorySchema = new Schema({
   name: { type: String, required: true, trim: true, maxlength: 100 },
-  normalizedName: { type: String, required: true, lowercase: true, trim: true, unique: true, index: true },
+  normalizedName: { type: String, required: true, lowercase: true, trim: true, unique: true },
   isActive: { type: Boolean, default: true, index: true },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },

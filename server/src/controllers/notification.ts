@@ -1,3 +1,4 @@
+import mongoose from 'mongoose'
 import type { Request, Response } from 'express'
 import {
   createNotification,
@@ -7,6 +8,7 @@ import {
   clearAllNotifications,
   deleteNotification,
 } from '../services/notification.js'
+import { AppError } from '../utils/errors.js'
 import {
   getVapidPublicKey,
   saveSubscription,
@@ -19,7 +21,9 @@ export async function getNotifications(req: Request, res: Response) {
 }
 
 export async function readNotification(req: Request, res: Response) {
-  const notification = await markNotificationRead(String(req.params.id), req.authUser!.id)
+  const id = String(req.params.id)
+  if (!mongoose.isValidObjectId(id)) throw new AppError(422, 'Invalid notification ID')
+  const notification = await markNotificationRead(id, req.authUser!.id)
   return success(res, notification ?? { read: false })
 }
 
@@ -32,7 +36,9 @@ export async function clearNotifications(req: Request, res: Response) {
 }
 
 export async function removeNotification(req: Request, res: Response) {
-  return success(res, await deleteNotification(String(req.params.id), req.authUser!.id))
+  const id = String(req.params.id)
+  if (!mongoose.isValidObjectId(id)) throw new AppError(422, 'Invalid notification ID')
+  return success(res, await deleteNotification(id, req.authUser!.id))
 }
 
 export async function createTestNotification(req: Request, res: Response) {

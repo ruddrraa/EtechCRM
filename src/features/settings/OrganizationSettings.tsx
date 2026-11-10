@@ -41,7 +41,7 @@ export function OrganizationSettings() {
     }
   }
 
-  // Use organization._id or fallback valid 24-char hex
+  // Use real Organization _id once loaded; fall back to explicit server-recognized pending placeholder only before initialization
   const orgOwnerId = organization._id && /^[a-f\d]{24}$/i.test(organization._id)
     ? organization._id
     : '000000000000000000000001'

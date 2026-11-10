@@ -2,11 +2,21 @@ import { User } from '../models/User.js'
 import { Client } from '../models/Client.js'
 import { Category } from '../models/Category.js'
 
-export function migrateLegacyRoles() {
-  return Promise.all([
+export async function migrateLegacyRoles(): Promise<{ migrated: boolean; modifiedCount: number }> {
+  const hasLegacy = await User.exists({ role: { $in: ['ADMIN', 'USER'] } })
+  if (!hasLegacy) {
+    return { migrated: false, modifiedCount: 0 }
+  }
+
+  const [adminResult, userResult] = await Promise.all([
     User.updateMany({ role: 'ADMIN' }, { $set: { role: 'MARKETING_HEAD', reportingTo: null }, $inc: { tokenVersion: 1 } }),
     User.updateMany({ role: 'USER' }, { $set: { role: 'MARKETING_EXECUTIVE', reportingTo: null }, $inc: { tokenVersion: 1 } }),
-  ]).then(() => undefined)
+  ])
+
+  return {
+    migrated: true,
+    modifiedCount: (adminResult.modifiedCount ?? 0) + (userResult.modifiedCount ?? 0),
+  }
 }
 
 export async function migrateCategories(adminId?: string) {

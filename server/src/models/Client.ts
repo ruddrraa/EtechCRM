@@ -21,5 +21,6 @@ const clientSchema = new Schema({
   isActive: { type: Boolean, default: true, index: true },
 }, { timestamps: true, versionKey: false })
 
+clientSchema.index({ isActive: 1, createdAt: -1 })
 clientSchema.index({ organisationName: 'text', category: 'text', address: 'text' })
 export const Client = model('Client', clientSchema)

@@ -24,7 +24,7 @@ export type NotificationItem = {
   recipient: string
   title: string
   message: string
-  type: 'VISIT_ASSIGNED' | 'VISIT_CANCELLED' | 'VISIT_UPDATED' | 'TEST'
+  type: 'VISIT_ASSIGNED' | 'VISIT_CANCELLED' | 'VISIT_UPDATED' | 'FOLLOW_UP_REMINDER' | 'TEST'
   entityType?: 'Visit' | 'Client'
   entityId?: string
   readAt?: string

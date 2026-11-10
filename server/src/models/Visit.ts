@@ -25,8 +25,8 @@ const locationSchema = new Schema({
 }, { _id: false })
 
 const visitSchema = new Schema({
-  client: { type: Schema.Types.ObjectId, ref: 'Client', required: true, index: true },
-  assignedTo: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  client: { type: Schema.Types.ObjectId, ref: 'Client', required: true },
+  assignedTo: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   assignedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   marketingHeadAtAssignment: { type: Schema.Types.ObjectId, ref: 'User' },
   source: { type: String, enum: ['ADMIN_ASSIGNED', 'SELF_ASSIGNED'], required: true },
@@ -50,5 +50,8 @@ const visitSchema = new Schema({
 }, { timestamps: true, versionKey: false })
 
 visitSchema.index({ assignedTo: 1, plannedDate: -1 })
+visitSchema.index({ assignedTo: 1, status: 1, plannedDate: -1 })
 visitSchema.index({ client: 1, plannedDate: -1 })
+visitSchema.index({ plannedDate: -1, status: 1 })
+visitSchema.index({ followUpDate: 1, status: 1 })
 export const Visit = model('Visit', visitSchema)

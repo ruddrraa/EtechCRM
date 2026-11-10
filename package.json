@@ -11,7 +11,12 @@
     "dev:start": "npm run dev:server",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:server": "vitest run server/tests --test-timeout=20000"
+    "test:server": "vitest run server/tests --test-timeout=20000",
+    "migrate:roles": "tsx server/src/scripts/migrateRoles.ts",
+    "backup:db": "tsx server/src/scripts/backupDb.ts",
+    "backup:verify": "tsx server/src/scripts/verifyBackup.ts",
+    "backup:db:verified": "tsx server/src/scripts/backupDb.ts --verify",
+    "restore:db:verify": "tsx server/src/scripts/restoreVerifyDb.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",

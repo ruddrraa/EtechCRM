@@ -427,11 +427,11 @@ export function SettingsPage() {
                           maxSizeBytes={5 * 1024 * 1024}
                           currentUrl={currentUser?.avatar}
                           onUploadSuccess={(data) => {
-                            updateUser({ ...user, avatar: data.viewUrl || data.signedUrl })
+                            updateUser({ ...user, avatar: data.viewUrl || data.signedUrl, avatarAsset: data.asset?._id })
                             void queryClient.invalidateQueries({ queryKey: ['profile', 'me'] })
                           }}
                           onDeleteSuccess={() => {
-                            updateUser({ ...user, avatar: undefined })
+                            updateUser({ ...user, avatar: undefined, avatarAsset: undefined })
                             void queryClient.invalidateQueries({ queryKey: ['profile', 'me'] })
                           }}
                         />

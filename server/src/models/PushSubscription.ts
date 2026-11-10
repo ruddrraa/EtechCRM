@@ -14,7 +14,7 @@ export interface IPushSubscription {
 
 const pushSubscriptionSchema = new Schema<IPushSubscription>(
   {
-    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     endpoint: { type: String, required: true, unique: true, trim: true },
     keys: {
       p256dh: { type: String, required: true, trim: true },

@@ -11,9 +11,27 @@ export async function authenticate(email: string, password: string) {
 }
 
 export function tokenFor(userId: string, role: string, tokenVersion = 0) {
-  return jwt.sign({ id: userId, role, tokenVersion }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] })
+  return jwt.sign({ id: userId, role, tokenVersion }, env.JWT_SECRET, {
+    algorithm: 'HS256',
+    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+  })
 }
 
 export function cookieOptions() {
-  return { httpOnly: true, secure: env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 24 * 60 * 60 * 1000, path: '/' }
+  return {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'lax' as const,
+    maxAge: 24 * 60 * 60 * 1000,
+    path: '/',
+  }
+}
+
+export function clearCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'lax' as const,
+    path: '/',
+  }
 }

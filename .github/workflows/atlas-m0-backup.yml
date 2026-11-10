@@ -1,0 +1,86 @@
+name: Scheduled MongoDB Atlas M0 Encrypted Backup
+
+on:
+  schedule:
+    # Daily at 21:00 UTC (02:30 IST)
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  encrypted-logical-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # NOTE ON MONGODB ATLAS M0 NETWORK ACCESS:
+    # Standard GitHub-hosted runners use dynamic egress IPs that change on each run.
+    # Do NOT leave Atlas IP Access List open to 0.0.0.0/0 in production.
+    # Recommended secure options:
+    #   1) Run this workflow on a self-hosted runner pinned to a static egress IP allowlisted in Atlas M0.
+    #   2) Or use scoped temporary IP allowlisting via Atlas Admin API before backup and delete the rule in `always()` teardown.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create encrypted logical backup
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: npm run backup:db
+
+      - name: Verify encrypted backup integrity immediately
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: npm run backup:verify
+
+      - name: Upload ONLY encrypted backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: etechcrm-encrypted-backup-${{ github.run_id }}
+          path: backups/*.enc
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Notify failure (sanitized webhook without secrets)
+        if: failure()
+        env:
+          BACKUP_ALERT_WEBHOOK_URL: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL }}
+        run: |
+          node -e "
+            const url = (process.env.BACKUP_ALERT_WEBHOOK_URL || '').trim();
+            if (!url) {
+              console.log('[Backup Alert] BACKUP_ALERT_WEBHOOK_URL not configured; skipping webhook notification.');
+              process.exit(0);
+            }
+            fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(5000),
+              body: JSON.stringify({
+                service: 'EtechCRM',
+                job: 'atlas-m0-backup',
+                status: 'failed',
+                runId: '${{ github.run_id }}',
+                timestamp: new Date().toISOString(),
+              }),
+            })
+              .then((res) => {
+                if (!res.ok) {
+                  console.error('[Backup Alert] Webhook returned HTTP ' + res.status);
+                }
+              })
+              .catch(() => {
+                console.error('[Backup Alert] Webhook delivery error (details redacted)');
+              });
+          "
+

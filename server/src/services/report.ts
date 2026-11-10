@@ -87,14 +87,20 @@ function sortStage(query: ReportQuery): mongoose.PipelineStage.Sort {
   return { $sort: { [field]: query.order === 'asc' ? 1 : -1, _id: -1 } }
 }
 
-function statusSummary(visits: VisitRow[]) {
-  return visits.reduce((summary, visit) => {
-    summary.total += 1
-    if (visit.status === 'COMPLETED') summary.completed += 1
-    else if (visit.status === 'CANCELLED') summary.cancelled += 1
-    else summary.pending += 1
-    return summary
-  }, { total: 0, completed: 0, pending: 0, cancelled: 0 })
+export const MAX_VISIT_DETAILS_ROWS = 500
+export const MAX_EXPORT_ROWS = 5000
+
+function statusSummaryFromCounts(counts: Array<{ _id: string; count: number }>) {
+  return counts.reduce(
+    (summary, item) => {
+      summary.total += item.count
+      if (item._id === 'COMPLETED') summary.completed += item.count
+      else if (item._id === 'CANCELLED') summary.cancelled += item.count
+      else summary.pending += item.count
+      return summary
+    },
+    { total: 0, completed: 0, pending: 0, cancelled: 0 }
+  )
 }
 
 export async function getReport(user: AuthUser, query: ReportQuery, view: 'client' | 'staff') {
@@ -104,19 +110,30 @@ export async function getReport(user: AuthUser, query: ReportQuery, view: 'clien
   const pipeline = await visitPipeline(user, query)
   const [result] = await Visit.aggregate([
     ...pipeline,
-    sortStage(query),
-    { $facet: { items: [{ $skip: (page - 1) * limit }, { $limit: limit }], all: [{ $count: 'value' }] } },
-  ]) as Array<{ items: VisitRow[]; all: Array<{ value: number }> }>
+    {
+      $facet: {
+        items: [sortStage(query), { $skip: (page - 1) * limit }, { $limit: limit }],
+        all: [{ $count: 'value' }],
+        statuses: [{ $group: { _id: '$status', count: { $sum: 1 } } }],
+      },
+    },
+  ]) as Array<{ items: VisitRow[]; all: Array<{ value: number }>; statuses: Array<{ _id: string; count: number }> }>
+
   const total = result?.all?.[0]?.value ?? 0
-  const summaryPipeline = await visitPipeline(user, query)
-  const allVisits = await Visit.aggregate([...summaryPipeline, { $project: { status: 1 } }]) as Array<{ status: string }>
-  return { items: result?.items ?? [], page, limit, total, pages: Math.ceil(total / limit), summary: statusSummary(allVisits as VisitRow[]) }
+  return {
+    items: result?.items ?? [],
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit),
+    summary: statusSummaryFromCounts(result?.statuses ?? []),
+  }
 }
 
 export async function getVisitDetails(user: AuthUser, query: ReportQuery, field: 'client' | 'assignedTo', value: string) {
   if (!mongoose.isValidObjectId(value)) throw new AppError(400, 'Invalid report filter')
   const pipeline = await visitPipeline(user, query, { [field]: new mongoose.Types.ObjectId(value) })
-  return await Visit.aggregate([...pipeline, sortStage(query)]) as VisitRow[]
+  return await Visit.aggregate([...pipeline, sortStage(query), { $limit: MAX_VISIT_DETAILS_ROWS }]) as VisitRow[]
 }
 
 function safeCell(value: unknown) {
@@ -177,7 +194,10 @@ export async function exportReport(user: AuthUser, query: ReportQuery, view: 'cl
     getOrganizationConfig(),
   ])
   const orgName = org?.name?.trim() || 'Excel Technologies and Services'
-  const visits = await Visit.aggregate([...pipeline, sortStage(query)]) as VisitRow[]
+  const visits = await Visit.aggregate([...pipeline, sortStage(query), { $limit: MAX_EXPORT_ROWS + 1 }]) as VisitRow[]
+  if (visits.length > MAX_EXPORT_ROWS) {
+    throw new AppError(422, `Export exceeds the ${MAX_EXPORT_ROWS.toLocaleString()}-row limit. Please narrow your date or status filters.`)
+  }
   const rows = exportRows(visits, view).map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeCell(value)])))
   const title = `${orgName} - ${view === 'client' ? 'Client Wise' : 'Staff Wise'} Visit Report`
   const headers = Object.keys(rows[0] ?? (view === 'client' ? { 'Client Name': '' } : { 'Executive Name': '' }))

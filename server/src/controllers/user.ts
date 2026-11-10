@@ -8,25 +8,33 @@ import mongoose from 'mongoose'
 
 const safeFields = 'name email phone role designation reportingTo avatar isActive isArchived createdAt updatedAt'
 
+export const MAX_USERS_LIST_LIMIT = 500
+
 export async function listUsers(req: Request, res: Response) {
   const actor = req.authUser!
   const role = typeof req.query.role === 'string' ? req.query.role : undefined
   const activeOnly = req.query.activeOnly === 'true'
+  const requestedLimit = Number(req.query.limit)
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(MAX_USERS_LIST_LIMIT, Math.floor(requestedLimit)) : MAX_USERS_LIST_LIMIT
   if (!['SUPER_ADMIN', 'MARKETING_HEAD', 'ADMIN'].includes(actor.role)) throw new AppError(403, 'You do not have permission to list staff')
   const team = actor.role === 'MARKETING_HEAD' ? { reportingTo: actor.id, role: { $in: ['MARKETING_EXECUTIVE', 'USER'] } } : {}
-  const users = await User.find({ isArchived: { $ne: true }, ...(activeOnly ? { isActive: true } : {}), ...(role ? { role: role === 'MARKETING_EXECUTIVE' ? { $in: ['MARKETING_EXECUTIVE', 'USER'] } : role } : {}), ...team }).select(safeFields).populate('reportingTo', 'name designation').sort({ name: 1 }).lean()
+  const users = await User.find({ isArchived: { $ne: true }, ...(activeOnly ? { isActive: true } : {}), ...(role ? { role: role === 'MARKETING_EXECUTIVE' ? { $in: ['MARKETING_EXECUTIVE', 'USER'] } : role } : {}), ...team }).select(safeFields).populate('reportingTo', 'name designation').sort({ name: 1 }).limit(limit).lean()
   return success(res, users)
 }
 
 export async function updateOwnProfile(req: Request, res: Response) {
-  const allowed = { name: req.body.name, phone: req.body.phone, avatar: req.body.avatar }
+  const allowed: Record<string, unknown> = { name: req.body.name }
+  if (req.body.phone !== undefined) allowed.phone = req.body.phone
+  if (req.body.avatar !== undefined) allowed.avatar = req.body.avatar
   const user = await User.findByIdAndUpdate(req.authUser!.id, { $set: allowed }, { new: true, runValidators: true }).select(safeFields).lean()
   return success(res, user)
 }
 
 export async function updateUserStatus(req: Request, res: Response) {
   const actor = req.authUser!
-  const target = await User.findById(String(req.params.id))
+  const targetId = String(req.params.id)
+  if (!mongoose.isValidObjectId(targetId)) throw new AppError(422, 'Invalid user ID')
+  const target = await User.findById(targetId)
   if (!target) throw new AppError(404, 'User not found')
   if (String(target._id) === actor.id) throw new AppError(400, 'You cannot deactivate your own account')
   if (!isHeadRole(actor.role) && actor.role !== 'SUPER_ADMIN') throw new AppError(403, 'You do not have permission to manage this account')
@@ -41,7 +49,9 @@ export async function updateUserStatus(req: Request, res: Response) {
 
 export async function archiveUser(req: Request, res: Response) {
   const actor = req.authUser!
-  const target = await User.findById(String(req.params.id))
+  const targetId = String(req.params.id)
+  if (!mongoose.isValidObjectId(targetId)) throw new AppError(422, 'Invalid user ID')
+  const target = await User.findById(targetId)
   if (!target) throw new AppError(404, 'User not found')
   if (String(target._id) === actor.id || target.role === 'SUPER_ADMIN' || (actor.role === 'MARKETING_HEAD' && (!isExecutiveRole(target.role) || String(target.reportingTo ?? '') !== actor.id))) {
     throw new AppError(403, 'You do not have permission to archive this account')

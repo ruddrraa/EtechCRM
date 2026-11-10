@@ -9,6 +9,14 @@ function extractAssetId(url?: string | null): string | null {
   return match ? match[1] : null
 }
 
+async function readFileHeaderHex(file: File): Promise<string> {
+  const slice = file.slice(0, 16)
+  const buffer = await slice.arrayBuffer()
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 interface FileUploadProps {
   ownerType: 'USER_AVATAR' | 'CLIENT_VISITING_CARD' | 'CLIENT_DOCUMENT' | 'VISIT_PHOTO' | 'VISIT_ATTACHMENT' | 'ORGANIZATION_EXPANDED_LOGO' | 'ORGANIZATION_COLLAPSED_LOGO' | 'GENERAL'
   ownerId: string
@@ -61,7 +69,11 @@ export function FileUpload({
   const handleFile = async (file: File) => {
     setError(null)
 
-    // Pre-upload validation: size
+    // Pre-upload validation: empty or oversized
+    if (file.size <= 0) {
+      setError('Cannot upload an empty file')
+      return
+    }
     if (file.size > maxSizeBytes) {
       const maxMb = Math.round(maxSizeBytes / (1024 * 1024))
       setError(`File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the maximum limit of ${maxMb}MB`)
@@ -70,34 +82,119 @@ export function FileUpload({
 
     setIsUploading(true)
 
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('ownerType', ownerType)
-    formData.append('ownerId', ownerId)
-    formData.append('visibility', 'PRIVATE')
-
     try {
-      const response = await fetch('/api/files/upload', {
+      const headerHex = await readFileHeaderHex(file)
+      const mimeType = file.type || 'application/octet-stream'
+
+      // 1. Obtain short-lived backend upload intent + Cloudinary signed upload params
+      const signResponse = await fetch('/api/files/sign-upload', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        body: JSON.stringify({
+          ownerType,
+          ownerId,
+          originalName: file.name,
+          mimeType,
+          sizeBytes: file.size,
+          headerHex,
+        }),
       })
 
-      const json = await response.json()
+      const signJson = await signResponse.json()
+      if (!signResponse.ok || !signJson.success) {
+        throw new Error(signJson.error?.message || 'Failed to authorize file upload')
+      }
 
-      if (!response.ok || !json.success) {
-        throw new Error(json.error?.message || 'File upload failed')
+      const { uploadIntentToken, uploadParams } = signJson.data as {
+        uploadIntentToken: string
+        uploadParams: {
+          mode: 'cloudinary' | 'mock'
+          uploadUrl?: string
+          apiKey?: string
+          timestamp: number
+          signature?: string
+          publicId: string
+          tags: string[]
+          type: 'authenticated'
+        }
+      }
+
+      let resultData: {
+        asset: { _id: string; originalName: string; sizeBytes: number; mimeType: string }
+        viewUrl?: string
+        signedUrl: string
+      }
+
+      if (uploadParams.mode === 'cloudinary' && uploadParams.uploadUrl && uploadParams.apiKey && uploadParams.signature) {
+        // 2a. Direct browser-to-Cloudinary upload (bypasses Vercel serverless 4.5MB body ceiling)
+        const cloudForm = new FormData()
+        cloudForm.append('file', file)
+        cloudForm.append('api_key', uploadParams.apiKey)
+        cloudForm.append('timestamp', String(uploadParams.timestamp))
+        cloudForm.append('signature', uploadParams.signature)
+        cloudForm.append('public_id', uploadParams.publicId)
+        cloudForm.append('tags', (uploadParams.tags || []).join(','))
+        cloudForm.append('type', uploadParams.type || 'authenticated')
+
+        const cloudResponse = await fetch(uploadParams.uploadUrl, {
+          method: 'POST',
+          body: cloudForm,
+        })
+
+        const cloudJson = await cloudResponse.json().catch(() => ({}))
+        if (!cloudResponse.ok) {
+          throw new Error(cloudJson.error?.message || 'Direct cloud upload failed')
+        }
+
+        // 3a. Server-side asset verification & MongoDB registration
+        const registerResponse = await fetch('/api/files/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            uploadIntentToken,
+            visibility: 'PRIVATE',
+          }),
+        })
+
+        const registerJson = await registerResponse.json()
+        if (!registerResponse.ok || !registerJson.success) {
+          throw new Error(registerJson.error?.message || 'Uploaded file verification failed')
+        }
+
+        resultData = registerJson.data
+      } else {
+        // 2b. Mock storage mode fallback (no external Cloudinary endpoint available)
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('ownerType', ownerType)
+        formData.append('ownerId', ownerId)
+        formData.append('visibility', 'PRIVATE')
+
+        const response = await fetch('/api/files/upload', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        })
+
+        const json = await response.json()
+        if (!response.ok || !json.success) {
+          throw new Error(json.error?.message || 'File upload failed')
+        }
+
+        resultData = json.data
       }
 
       setFileName(file.name)
-      if (json.data.asset?._id) {
-        setCurrentAssetId(json.data.asset._id)
-        setPreviewUrl(`/api/files/${json.data.asset._id}/view`)
+      if (resultData.asset?._id) {
+        setCurrentAssetId(resultData.asset._id)
+        setPreviewUrl(`/api/files/${resultData.asset._id}/view`)
       } else {
-        setPreviewUrl(json.data.viewUrl || json.data.signedUrl)
+        setPreviewUrl(resultData.viewUrl || resultData.signedUrl)
       }
 
-      onUploadSuccess?.(json.data)
+      onUploadSuccess?.(resultData)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setError(msg)
@@ -114,11 +211,28 @@ export function FileUpload({
     }
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!window.confirm('Are you sure you want to remove this file?')) return
+    setError(null)
+    if (currentAssetId) {
+      try {
+        const res = await fetch(`/api/files/${currentAssetId}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+        if (!res.ok && res.status !== 404) {
+          const json = await res.json().catch(() => ({}))
+          throw new Error(json.error?.message || 'Failed to delete file')
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(msg)
+        return
+      }
+    }
+    setCurrentAssetId(null)
     setPreviewUrl(null)
     setFileName(null)
-    setError(null)
     onDeleteSuccess?.()
   }
 
@@ -263,7 +377,7 @@ export function FileUpload({
               type="button"
               variant="danger"
               size="sm"
-              onClick={handleDelete}
+              onClick={() => void handleDelete()}
               title="Delete file"
             >
               <X size={14} />

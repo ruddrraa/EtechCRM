@@ -4,7 +4,7 @@ import { archiveUser, listUsers, reassignExecutive, updateOwnProfile, updateUser
 import { success } from '../utils/api.js'
 import { User } from '../models/User.js'
 import { validate } from '../middleware/validate.js'
-import { profileSchema, statusSchema } from '../validators/auth.js'
+import { preferencesSchema, profileSchema, statusSchema } from '../validators/auth.js'
 
 export const userRouter = Router()
 userRouter.use(requireAuth)
@@ -20,13 +20,17 @@ userRouter.get('/me', async (req, res) => {
   }
   return success(res, user)
 })
-userRouter.patch('/me/preferences', async (req, res) => {
+userRouter.patch('/me/preferences', validate(preferencesSchema), async (req, res) => {
   const allowed = ['dailyProductivity', 'newEventCreated', 'mobilePush', 'desktopAlerts', 'emailSummary']
   const updates: Record<string, boolean> = {}
   for (const key of allowed) {
     if (typeof req.body[key] === 'boolean') {
       updates[`notificationPreferences.${key}`] = req.body[key]
     }
+  }
+  if (Object.keys(updates).length === 0) {
+    const existing = await User.findById(req.authUser!.id).select('notificationPreferences').lean()
+    return success(res, existing?.notificationPreferences)
   }
   const user = await User.findByIdAndUpdate(
     req.authUser!.id,

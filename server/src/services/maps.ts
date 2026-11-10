@@ -81,7 +81,10 @@ export async function fetchPlaceAutocomplete(input: string): Promise<Autocomplet
       console.error('[Ola Maps Autocomplete] Request timed out')
       return []
     }
-    console.error('[Ola Maps Autocomplete] Provider request failed:', err instanceof Error ? err.message : 'Unknown error')
+    console.error(
+      '[Ola Maps Autocomplete] Provider request failed:',
+      (err instanceof Error ? err.message : 'Unknown error').replace(/([?&]api_key=)[^&\s]+/gi, '$1***')
+    )
     return []
   } finally {
     clearTimeout(timeoutId)
@@ -146,7 +149,10 @@ export async function fetchPlaceDetails(placeId: string): Promise<PlaceDetails |
       console.error('[Ola Maps Details] Request timed out')
       return null
     }
-    console.error('[Ola Maps Details] Provider request failed:', err instanceof Error ? err.message : 'Unknown error')
+    console.error(
+      '[Ola Maps Details] Provider request failed:',
+      (err instanceof Error ? err.message : 'Unknown error').replace(/([?&]api_key=)[^&\s]+/gi, '$1***')
+    )
     return null
   } finally {
     clearTimeout(timeoutId)

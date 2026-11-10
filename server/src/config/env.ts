@@ -5,7 +5,18 @@ const schema = z.object({
   MONGODB_URI: z.string().min(1),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('1d'),
-  CLIENT_URL: z.string().url().default('http://localhost:5173'),
+  CLIENT_URL: z
+    .string()
+    .default('http://localhost:5173')
+    .refine(
+      (val) =>
+        val
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .every((item) => z.string().url().safeParse(item).success),
+      { message: 'CLIENT_URL must be a valid URL or comma-separated list of URLs' }
+    ),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
   BOOTSTRAP_TOKEN: z.string().min(32).optional(),
@@ -17,7 +28,25 @@ const schema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().default('mailto:admin@exceltechnologies.in'),
-})
+  CRON_SECRET: z.string().optional(),
+  FOLLOWUP_TIMEZONE: z
+    .string()
+    .default('Asia/Kolkata')
+    .refine(
+      (tz) => {
+        try {
+          new Intl.DateTimeFormat('en-US', { timeZone: tz })
+          return true
+        } catch {
+          return false
+        }
+      },
+      { message: 'FOLLOWUP_TIMEZONE must be a valid IANA timezone' }
+    ),
+}).refine(
+  (data) => !data.CRON_SECRET || data.NODE_ENV === 'test' || data.CRON_SECRET.trim().length >= 32,
+  { message: 'CRON_SECRET must be at least 32 characters when configured', path: ['CRON_SECRET'] }
+)
 
 export const env = schema.parse({
   MONGODB_URI: process.env.MONGODB_URI,
@@ -35,4 +64,6 @@ export const env = schema.parse({
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
   VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'mailto:admin@exceltechnologies.in',
+  CRON_SECRET: process.env.CRON_SECRET,
+  FOLLOWUP_TIMEZONE: process.env.FOLLOWUP_TIMEZONE || 'Asia/Kolkata',
 })

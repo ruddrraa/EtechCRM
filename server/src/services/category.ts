@@ -1,9 +1,14 @@
+import mongoose from 'mongoose'
 import { Category } from '../models/Category.js'
 import { Client } from '../models/Client.js'
 import { AppError } from '../utils/errors.js'
 import { recordAudit } from './audit.js'
 import type { AuthUser } from '../middleware/auth.js'
 import type { CreateCategoryInput, UpdateCategoryInput } from '../validators/category.js'
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 export async function listCategories(user: AuthUser, query: { activeOnly?: string; q?: string }) {
   const isSuperAdmin = user.role === 'SUPER_ADMIN'
@@ -13,8 +18,8 @@ export async function listCategories(user: AuthUser, query: { activeOnly?: strin
     filter.isActive = true
   }
 
-  if (query.q) {
-    filter.name = { $regex: query.q.trim(), $options: 'i' }
+  if (query.q && query.q.trim()) {
+    filter.name = { $regex: escapeRegex(query.q.trim().slice(0, 100)), $options: 'i' }
   }
 
   const items = await Category.find(filter)
@@ -45,6 +50,9 @@ export async function createCategory(input: CreateCategoryInput, actor: string) 
 }
 
 export async function updateCategory(id: string, input: UpdateCategoryInput, actor: string) {
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(422, 'Invalid category ID')
+  }
   const category = await Category.findById(id)
   if (!category) {
     throw new AppError(404, 'Category not found')
@@ -75,6 +83,9 @@ export async function updateCategory(id: string, input: UpdateCategoryInput, act
 }
 
 export async function deleteCategory(id: string, actor: string) {
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(422, 'Invalid category ID')
+  }
   const category = await Category.findById(id)
   if (!category) {
     throw new AppError(404, 'Category not found')
@@ -83,7 +94,7 @@ export async function deleteCategory(id: string, actor: string) {
   const clientReferencing = await Client.findOne({
     $or: [
       { categoryId: category._id },
-      { category: { $regex: `^${category.name.trim()}$`, $options: 'i' } },
+      { category: { $regex: `^${escapeRegex(category.name.trim())}$`, $options: 'i' } },
     ],
   }).select('_id organisationName').lean()
 

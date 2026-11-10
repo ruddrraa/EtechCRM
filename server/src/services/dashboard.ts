@@ -76,6 +76,7 @@ export async function getDashboardSummary(user: AuthUser, query: DashboardQuery 
       { $match: periodFilter },
       { $group: { _id: { $dateToString: { format: range.bucket, date: '$plannedDate' } }, visits: { $sum: 1 }, completed: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, 1, 0] } } } },
       { $sort: { _id: 1 } },
+      { $limit: 366 },
     ]),
     user.role === 'MARKETING_EXECUTIVE' ? Promise.resolve([]) : Visit.aggregate([
       { $match: periodFilter },
@@ -96,6 +97,7 @@ export async function getDashboardSummary(user: AuthUser, query: DashboardQuery 
       { $unwind: { path: '$head', preserveNullAndEmptyArrays: true } },
       { $project: { _id: 0, name: { $ifNull: ['$head.name', 'Unassigned head'] }, visits: 1, completed: 1, completionRate: { $cond: [{ $eq: ['$visits', 0] }, 0, { $multiply: [{ $divide: ['$completed', '$visits'] }, 100] }] } } },
       { $sort: { visits: -1 } },
+      { $limit: 50 },
     ]) : Promise.resolve([]),
     Visit.aggregate([
       { $match: periodFilter },

@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import type { Request, Response } from 'express'
 import { User } from '../models/User.js'
-import { authenticate, cookieOptions, tokenFor } from '../services/auth.js'
+import { authenticate, clearCookieOptions, cookieOptions, tokenFor } from '../services/auth.js'
 import { recordAudit } from '../services/audit.js'
 import { success } from '../utils/api.js'
 import { AppError } from '../utils/errors.js'
@@ -23,13 +23,13 @@ export async function login(req: Request, res: Response) {
 
 export async function logout(req: Request, res: Response) {
   if (req.authUser) await User.findByIdAndUpdate(req.authUser.id, { $inc: { tokenVersion: 1 } })
-  res.clearCookie('accessToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' })
+  res.clearCookie('accessToken', clearCookieOptions())
   return success(res, { loggedOut: true })
 }
 
 export async function logoutAll(req: Request, res: Response) {
   if (req.authUser) await User.findByIdAndUpdate(req.authUser.id, { $inc: { tokenVersion: 1 } })
-  res.clearCookie('accessToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' })
+  res.clearCookie('accessToken', clearCookieOptions())
   return success(res, { loggedOutAll: true })
 }
 

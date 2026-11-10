@@ -5,12 +5,12 @@ export type Role = typeof roles[number]
 
 const userSchema = new Schema({
   name: { type: String, required: true, trim: true, maxlength: 120 },
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   phone: { type: String, trim: true },
   passwordHash: { type: String, required: true, select: false },
   role: { type: String, enum: roles, required: true, default: 'MARKETING_EXECUTIVE', index: true },
   designation: { type: String, trim: true, maxlength: 120 },
-  reportingTo: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+  reportingTo: { type: Schema.Types.ObjectId, ref: 'User', default: null },
   avatar: { type: String },
   avatarAsset: { type: Schema.Types.ObjectId, ref: 'FileAsset' },
   isActive: { type: Boolean, default: true, index: true },

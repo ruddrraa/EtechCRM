@@ -1,23 +1,80 @@
-import { Notification } from '../models/Notification.js'
-import { sendPushToUser } from './push.js'
+import { Notification, type NotificationType } from '../models/Notification.js'
+import { sendPushToUserDetailed, type PushDeliverySummary } from './push.js'
 
-export async function createNotification(input: {
+export interface CreateNotificationInput {
   recipient: string
   title: string
   message: string
-  type: 'VISIT_ASSIGNED' | 'VISIT_CANCELLED' | 'VISIT_UPDATED' | 'TEST'
+  type: NotificationType
   entityType?: 'Visit' | 'Client'
   entityId?: string
-}) {
-  const notif = await Notification.create(input)
-  void sendPushToUser(input.recipient, {
-    title: input.title,
-    body: input.message,
-    url: input.entityType === 'Visit' ? '/visits' : '/',
-    tag: `crm-notif-${String(notif._id)}`,
-    notificationId: String(notif._id),
-  }).catch(() => {})
-  return notif
+  deliveryKey?: string
+}
+
+export async function createIdempotentNotification(input: CreateNotificationInput): Promise<{
+  notification: NonNullable<Awaited<ReturnType<typeof Notification.findById>>>
+  deduplicated: boolean
+  pushResult: PushDeliverySummary
+}> {
+  let notif
+  let deduplicated = false
+
+  try {
+    notif = await Notification.create(input)
+  } catch (err: unknown) {
+    const mongoErr = err as { code?: number }
+    if (input.deliveryKey && mongoErr?.code === 11000) {
+      const existing = await Notification.findOne({ deliveryKey: input.deliveryKey })
+      if (existing) {
+        deduplicated = true
+        return {
+          notification: existing,
+          deduplicated: true,
+          pushResult: {
+            sent: 0,
+            failed: 0,
+            removedExpired: 0,
+            retried: 0,
+            timedOut: 0,
+            skippedReason: 'DUPLICATE_DELIVERY_KEY',
+          },
+        }
+      }
+    }
+    throw err
+  }
+
+  let pushResult: PushDeliverySummary = {
+    sent: 0,
+    failed: 0,
+    removedExpired: 0,
+    retried: 0,
+    timedOut: 0,
+  }
+
+  try {
+    pushResult = await sendPushToUserDetailed(
+      input.recipient,
+      {
+        title: input.title,
+        body: input.message,
+        url: input.entityType === 'Visit' ? '/visits' : input.entityType === 'Client' ? '/clients' : '/',
+        tag: `crm-notif-${String(notif._id)}`,
+        notificationId: String(notif._id),
+      },
+      { notificationType: input.type }
+    )
+  } catch (err) {
+    console.warn('[Notification] Push dispatch failed safely:', err instanceof Error ? err.message : 'Unknown error')
+    pushResult = { sent: 0, failed: 1, removedExpired: 0, retried: 0, timedOut: 0 }
+  }
+
+  return { notification: notif, deduplicated, pushResult }
+}
+
+export async function createNotification(input: CreateNotificationInput) {
+  const { notification } = await createIdempotentNotification(input)
+  return notification
 }
 
 export async function listNotifications(recipient: string, page = 1, limit = 20) {

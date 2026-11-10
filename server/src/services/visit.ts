@@ -1,6 +1,8 @@
+import mongoose from 'mongoose'
 import { Client } from '../models/Client.js'
 import { Visit } from '../models/Visit.js'
 import { User } from '../models/User.js'
+import { FollowUpTask } from '../models/FollowUpTask.js'
 import { AppError } from '../utils/errors.js'
 import { recordAudit } from './audit.js'
 import { createNotification } from './notification.js'
@@ -64,10 +66,11 @@ export async function selfAssignVisit(input: { clientId: string; plannedDate: Da
 }
 
 async function ownVisit(id: string, actor: AuthUser) {
+  if (!mongoose.isValidObjectId(id)) throw new AppError(422, 'Invalid visit ID')
   const visit = await Visit.findById(id)
   if (!visit) throw new AppError(404, 'Visit not found')
   if (isExecutiveRole(actor.role) && String(visit.assignedTo) !== actor.id) throw new AppError(404, 'Visit not found')
-  if (actor.role === 'MARKETING_HEAD' && String(visit.assignedBy) !== actor.id) {
+  if (actor.role === 'MARKETING_HEAD') {
     const assigned = await User.findOne({ _id: visit.assignedTo, reportingTo: actor.id })
     if (!assigned) throw new AppError(404, 'Visit not found')
   }
@@ -321,6 +324,36 @@ export async function complete(
   visit.status = 'COMPLETED'
   await visit.save()
 
+  if (input.followUpDate) {
+    let marketingHeadAtCreation = visit.marketingHeadAtAssignment
+    if (!marketingHeadAtCreation) {
+      const executive = await User.findById(visit.assignedTo).select('reportingTo').lean()
+      marketingHeadAtCreation = executive?.reportingTo ?? undefined
+    }
+
+    const followUpTask = await FollowUpTask.findOneAndUpdate(
+      { sourceVisit: visit._id },
+      {
+        $setOnInsert: {
+          sourceVisit: visit._id,
+          client: visit.client,
+          assignedTo: visit.assignedTo,
+          marketingHeadAtCreation,
+          dueDate: input.followUpDate,
+          remarks: input.remarks,
+          status: 'PENDING',
+        },
+      },
+      { upsert: true, new: true }
+    )
+
+    await recordAudit(actor.id, 'FOLLOW_UP_TASK_CREATED', 'FollowUpTask', String(followUpTask._id), {
+      sourceVisit: id,
+      dueDate: input.followUpDate,
+      ...(marketingHeadAtCreation ? { marketingHeadAtCreation: String(marketingHeadAtCreation) } : {}),
+    })
+  }
+
   await recordAudit(actor.id, 'VISIT_COMPLETED', 'Visit', id, {
     verificationStatus,
     distanceFromClient: distance,
@@ -346,6 +379,7 @@ export async function complete(
 }
 
 export async function authorizeException(id: string, reason: string, actor: AuthUser) {
+  if (!mongoose.isValidObjectId(id)) throw new AppError(422, 'Invalid visit ID')
   const visit = await Visit.findById(id)
   if (!visit) throw new AppError(404, 'Visit not found')
   if (visit.status === 'COMPLETED' || visit.status === 'CANCELLED') {
@@ -354,8 +388,8 @@ export async function authorizeException(id: string, reason: string, actor: Auth
 
   if (actor.role !== 'SUPER_ADMIN') {
     if (actor.role === 'MARKETING_HEAD') {
-      const executive = await User.findById(visit.assignedTo)
-      if (String(visit.assignedBy) !== actor.id && String(executive?.reportingTo ?? '') !== actor.id) {
+      const executive = await User.findById(visit.assignedTo).select('reportingTo').lean()
+      if (String(executive?.reportingTo ?? '') !== actor.id) {
         throw new AppError(403, 'You can only authorize exceptions for your own team')
       }
     } else {

@@ -11,6 +11,17 @@ export const registerUserSchema = z.object({
   reportingTo: z.string().regex(/^[a-f\d]{24}$/i).nullable().optional(),
 })
 export const bootstrapSchema = z.object({ name: z.string().trim().min(1).max(120), email: z.string().email(), password: z.string().min(8).max(128) })
-export const profileSchema = z.object({ name: z.string().trim().min(1).max(120), phone: z.string().trim().max(30).optional(), avatar: z.string().url().optional().or(z.literal('')) })
+export const profileSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  phone: z.string().trim().max(30).optional(),
+  avatar: z.string().regex(/^\/api\/files\/[a-f\d]{24}\/view$/i, 'Avatar must reference a valid CRM file asset').optional().or(z.literal('')),
+})
+export const preferencesSchema = z.object({
+  dailyProductivity: z.boolean().optional(),
+  newEventCreated: z.boolean().optional(),
+  mobilePush: z.boolean().optional(),
+  desktopAlerts: z.boolean().optional(),
+  emailSummary: z.boolean().optional(),
+})
 export const statusSchema = z.object({ isActive: z.boolean() })
 export const passwordSchema = z.object({ currentPassword: z.string().min(8).max(128), newPassword: z.string().min(8).max(128) })

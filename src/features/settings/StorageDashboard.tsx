@@ -1,8 +1,26 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
+import { Button } from '../../components/ui/Button'
 import { apiFetch } from '../../lib/api'
-import { HardDrive, FileCheck, Layers, Clock, Cloud } from 'lucide-react'
+import { HardDrive, FileCheck, Layers, Clock, Cloud, ShieldCheck, Trash2 } from 'lucide-react'
+
+interface OrphanReport {
+  dryRun: boolean
+  minAgeHours: number
+  verifyCloud: boolean
+  cutoffDate: string
+  summary: {
+    pendingCloudDeletes: number
+    unregisteredCloudAssets: number
+    staleDbRecords: number
+    cleanedPendingCloudDeletes: number
+    cleanedUnregisteredCloudAssets: number
+    archivedStaleDbRecords: number
+    errors: number
+  }
+}
 
 interface StorageStats {
   totalFiles: number
@@ -48,10 +66,41 @@ function formatCategory(key: string): string {
 }
 
 export function StorageDashboard() {
+  const queryClient = useQueryClient()
+  const [orphanReport, setOrphanReport] = useState<OrphanReport | null>(null)
+  const [orphanError, setOrphanError] = useState<string | null>(null)
+
   const { data: stats, isLoading, isError } = useQuery<StorageStats>({
     queryKey: ['settings', 'storageDashboard'],
     queryFn: () => apiFetch<StorageStats>('/files/storage/dashboard'),
     staleTime: 30000,
+  })
+
+  const orphanAuditMutation = useMutation({
+    mutationFn: () => apiFetch<OrphanReport>('/files/storage/orphans?minAgeHours=24&verifyCloud=true'),
+    onSuccess: (report) => {
+      setOrphanError(null)
+      setOrphanReport(report)
+    },
+    onError: (err: Error) => {
+      setOrphanError(err.message)
+    },
+  })
+
+  const orphanCleanupMutation = useMutation({
+    mutationFn: () =>
+      apiFetch<OrphanReport>('/files/storage/orphans/cleanup', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false, minAgeHours: 24, verifyCloud: true }),
+      }),
+    onSuccess: (report) => {
+      setOrphanError(null)
+      setOrphanReport(report)
+      void queryClient.invalidateQueries({ queryKey: ['settings', 'storageDashboard'] })
+    },
+    onError: (err: Error) => {
+      setOrphanError(err.message)
+    },
   })
 
   return (
@@ -152,6 +201,75 @@ export function StorageDashboard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+
+          {/* Safe Orphan Storage Audit & Cleanup (Super Admin) */}
+          <div style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '1rem', background: 'var(--surface-muted, #fafafa)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <ShieldCheck size={16} /> Orphan Asset Safety Audit (24h Age Guard)
+                </h3>
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                  Detects abandoned uploads, deferred cloud deletions, and missing-cloud records older than 24 hours.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={orphanAuditMutation.isPending || orphanCleanupMutation.isPending}
+                  onClick={() => orphanAuditMutation.mutate()}
+                >
+                  {orphanAuditMutation.isPending ? 'Scanning...' : 'Scan Orphans (Dry Run)'}
+                </Button>
+                {orphanReport &&
+                  orphanReport.summary.pendingCloudDeletes +
+                    orphanReport.summary.unregisteredCloudAssets +
+                    orphanReport.summary.staleDbRecords >
+                    0 && (
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      disabled={orphanCleanupMutation.isPending || orphanAuditMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm('Clean up verified orphan storage assets older than 24 hours? Active CRM records will not be touched.')) {
+                          orphanCleanupMutation.mutate()
+                        }
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      {orphanCleanupMutation.isPending ? 'Cleaning...' : 'Clean Verified Orphans'}
+                    </Button>
+                  )}
+              </div>
+            </div>
+
+            {orphanError && (
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.8rem', color: '#e11d48' }}>{orphanError}</p>
+            )}
+
+            {orphanReport && (
+              <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
+                {orphanReport.dryRun ? 'Dry-run scan results' : 'Cleanup completed'}:{' '}
+                <strong>{orphanReport.summary.pendingCloudDeletes}</strong> pending deletes,{' '}
+                <strong>{orphanReport.summary.unregisteredCloudAssets}</strong> unregistered cloud uploads,{' '}
+                <strong>{orphanReport.summary.staleDbRecords}</strong> stale DB references.
+                {!orphanReport.dryRun && (
+                  <span>
+                    {' '}
+                    Removed{' '}
+                    <strong>
+                      {orphanReport.summary.cleanedPendingCloudDeletes +
+                        orphanReport.summary.cleanedUnregisteredCloudAssets}
+                    </strong>{' '}
+                    cloud objects and archived <strong>{orphanReport.summary.archivedStaleDbRecords}</strong> stale DB records.
+                  </span>
+                )}
               </div>
             )}
           </div>

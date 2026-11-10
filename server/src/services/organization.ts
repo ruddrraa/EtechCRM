@@ -1,4 +1,5 @@
 import { Organization, type IOrganization } from '../models/Organization.js'
+import { FileAsset } from '../models/FileAsset.js'
 import { recordAudit } from './audit.js'
 
 export const DEFAULT_ORGANIZATION_NAME = 'Excel Technologies and Services'
@@ -52,7 +53,32 @@ export async function updateOrganizationConfig(
     { upsert: true, new: true }
   ).lean()
 
-  await recordAudit(actorId, 'ORGANIZATION_UPDATED', 'Organization', String((updatedDoc as { _id?: unknown })?._id ?? 'org'), {
+  const resolvedOrgId = (updatedDoc as { _id?: unknown })?._id
+  if (resolvedOrgId) {
+    const assetIdsToAssign = [
+      (updatedDoc as { expandedLogoAsset?: unknown }).expandedLogoAsset,
+      (updatedDoc as { collapsedLogoAsset?: unknown }).collapsedLogoAsset,
+    ].filter(Boolean)
+
+    await FileAsset.updateMany(
+      {
+        isArchived: false,
+        ownerType: { $in: ['ORGANIZATION_EXPANDED_LOGO', 'ORGANIZATION_COLLAPSED_LOGO'] },
+        $or: [
+          ...(assetIdsToAssign.length > 0 ? [{ _id: { $in: assetIdsToAssign } }] : []),
+          { 'metadata.ownershipStatus': 'PENDING_ORGANIZATION' },
+        ],
+      },
+      {
+        $set: {
+          ownerId: resolvedOrgId,
+          'metadata.ownershipStatus': 'ASSIGNED',
+        },
+      }
+    )
+  }
+
+  await recordAudit(actorId, 'ORGANIZATION_UPDATED', 'Organization', String(resolvedOrgId ?? 'org'), {
     previous: { name: current.name, email: current.email, phone: current.phone },
     updated: { name: input.name, email: input.email, phone: input.phone },
   })

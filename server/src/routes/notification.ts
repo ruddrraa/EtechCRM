@@ -11,11 +11,12 @@ import {
   unsubscribePush,
 } from '../controllers/notification.js'
 import { requireAuth } from '../middleware/auth.js'
+import { pushRateLimiter } from '../middleware/rateLimit.js'
 
 export const notificationRouter = Router()
 
 // Public VAPID key is safe to fetch without prior session credentials
-notificationRouter.get('/push/vapid-key', getVapidKey)
+notificationRouter.get('/push/vapid-key', pushRateLimiter, getVapidKey)
 
 notificationRouter.use(requireAuth)
 notificationRouter.get('/', getNotifications)
@@ -26,5 +27,5 @@ notificationRouter.delete('/', clearNotifications)
 notificationRouter.delete('/:id', removeNotification)
 
 // Authenticated Push API routes
-notificationRouter.post('/push/subscribe', subscribePush)
-notificationRouter.post('/push/unsubscribe', unsubscribePush)
+notificationRouter.post('/push/subscribe', pushRateLimiter, subscribePush)
+notificationRouter.post('/push/unsubscribe', pushRateLimiter, unsubscribePush)

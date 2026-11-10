@@ -653,8 +653,6 @@ Remaining limitations:
   - `npm run build:server`: 0 errors.
   - `npm run build`: 0 errors.
   - `npm run lint`: 0 errors.
-- Phase 3.5 remains intentionally deferred.
-
 
 ### 7. Cloudinary Provider Activation & Mock URL Remediation
 - **Explicit Provider Selection**: Enforced strict provider selection logic. When valid Cloudinary credentials (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`) are present, `CloudinaryStorageProvider` is instantiated. Silent fallback to `MockStorageProvider` is forbidden; mock storage is only permitted when explicitly configured via `STORAGE_PROVIDER=mock` or in automated test environments (`NODE_ENV=test`).
@@ -774,7 +772,202 @@ Remaining limitations:
   - `npm run build:server`: 0 errors.
   - `npm run build`: 0 errors.
   - `npm run lint`: 0 errors.
-- Phase 3.5 remains intentionally deferred.
+
+## Phase 3.5 — Production Readiness, Security & Deployment Hardening
+
+### Step 1 — Vercel Serverless Architecture & MongoDB Atlas M0 Optimization (Completed & Locally Verified)
+- **Serverless Entrypoint (`api/index.ts`)**:
+  - Created Vercel Node Serverless handler wrapping cached `createApp()` Express instance without invoking `app.listen()`.
+  - Connects to MongoDB cleanly via `await connectDatabase()` before dispatching `(req, res)`, awaits response completion, and handles DB/config errors with sanitized JSON `503` (never leaking connection credentials).
+- **Vercel Deployment Configuration (`vercel.json`)**:
+  - Configured `/api/(.*)` -> `/api` serverless rewrites, SPA fallback excluding `/api/`, `/assets/`, `/sw.js`, `/manifest.json`, `maxDuration: 10` for Hobby tier compatibility, `Cache-Control: no-store` for `/api/(.*)`, and `Cache-Control: no-cache` + `Service-Worker-Allowed: /` for `/sw.js`.
+- **Atlas M0 Connection Reuse (`server/src/config/db.ts`)**:
+  - Added `globalThis` connection & promise caching with Atlas M0 conservative pool limits (`maxPoolSize: 5`, `minPoolSize: 0`, `serverSelectionTimeoutMS: 5000`, `socketTimeoutMS: 20000`) and automatic clearing of rejected/disconnected promises.
+- **Migration Safety (`server/src/services/migration.ts`, `server/src/server.ts`)**:
+  - Removed unconditional `migrateLegacyRoles()` writes from `connectDatabase()`. Added read-only `User.exists()` guard inside `migrateLegacyRoles()`, kept explicit local startup invocation in `server.ts`, and added `npm run migrate:roles` CLI script (`server/src/scripts/migrateRoles.ts`).
+- **Reverse Proxy & CORS Origin Support (`server/src/app.ts`, `server/src/middleware/auth.ts`, `server/src/config/env.ts`)**:
+  - Enabled `app.set('trust proxy', 1)`, default API `no-store` headers, comma-separated `CLIENT_URL` validation, and exact `VERCEL_URL` / `VERCEL_PROJECT_PRODUCTION_URL` HTTPS origin allowlisting.
+- **Verification**:
+  - `api/index.ts` strict TypeScript check: **0 errors**.
+  - `npm run build:server`, `npm run build`, `npm run lint`: **0 errors**.
+  - `npm run test:server`: **89 / 89 tests passing** across 7 suites (including `server/tests/serverless-db.test.ts`).
+
+### Step 2 — Security & Authorization Hardening (Completed & Locally Verified)
+- **RBAC & IDOR Fixes**:
+  - `PATCH /api/clients/:id` (`server/src/controllers/client.ts`, `server/src/services/client.ts`): Enforces Marketing Head team ownership (`createdBy` must be actor or actor's team member), rejects Executives (`403`), and preserves Super Admin org-wide access.
+  - `GET /api/audit-logs` (`server/src/routes/audit.ts`): Scoped Marketing Head visibility to own + current team actor IDs while keeping Super Admin org-wide access.
+  - `ownVisit` & `authorizeException` (`server/src/services/visit.ts`): Enforced strict current-team `reportingTo` verification for Marketing Heads (preventing post-reassignment stale `assignedBy` access) while preserving historical `marketingHeadAtAssignment`.
+- **Auth, Sessions & URL Injection Hardening**:
+  - `server/src/middleware/auth.ts` & `server/src/services/auth.ts`: Pinned `HS256` in `jwt.sign` / `jwt.verify`, added strict ObjectId + numeric `tokenVersion` claims validation, unified `clearCookieOptions`, and preserved two-session invalidation (`logout-all` and `change-password`).
+  - `server/src/validators/auth.ts` & `server/src/validators/organization.ts`: Restricted `avatar`, `expandedLogo`, and `collapsedLogo` to valid `/api/files/<24hex>/view` CRM paths (or `""`) and added Zod `preferencesSchema` on `PATCH /api/users/me/preferences`.
+- **Serverless Distributed Rate Limiting (`RateLimitBucket.ts`, `server/src/middleware/rateLimit.ts`)**:
+  - Replaced in-memory limiters on auth and uploads with a MongoDB TTL-backed atomic `findOneAndUpdate` store (`expiresAt` TTL index) using SHA-256 hashed bucket keys and Atlas M0 write restraint (only security-sensitive endpoints write).
+  - Separated limiters: `loginAccountLimiter` (15/15m per IP+email), `loginIpLimiter` (150/15m), `passwordSessionLimiter` (20/15m), `uploadRateLimiter` (60/15m), `mapsRateLimiter` (120/15m), `pushRateLimiter` (60/15m). Enforces **fail-closed `503`** if store is unreachable.
+- **API Security, CSRF, ReDoS, XSS & Error Masking**:
+  - `requireSameOrigin` checks `Sec-Fetch-Site: cross-site`, `Origin`, and `Referer` fallback on state-changing requests.
+  - Added global `sanitizeRequestInputs` stripping `$` / `.` / prototype-pollution keys from `req.body` and `req.query`.
+  - Escaped regex metacharacters in `server/src/services/category.ts`, XML-escaped mock SVG previews in `storage.service.ts`, tuned Helmet policies, mapped Mongoose `CastError` -> `422` & Multer size limit -> `413`, and masked DB URIs/API keys in error logs.
+- **Verification**:
+  - `npm run lint`, `npm run build:server`, `npm run build`: **0 errors**.
+  - `npm run test:server`: **98 / 98 tests passing** across 8 suites (including 9 new regression tests in `server/tests/step2-security-hardening.test.ts`).
+
+### Step 3 — MongoDB Atlas M0 Query & Index Optimization (Completed & Locally Verified)
+- **Single-Pass `$facet` Report Aggregation (`server/src/services/report.ts`)**:
+  - Eliminated duplicate `Visit.aggregate` calls in `getReport()` by calculating `items`, `all` total count, and `statuses` summary (`COMPLETED` / `CANCELLED` / `pending`) in a single `$facet` pipeline.
+- **Bounded Queries & Guardrails (`server/src/services/report.ts`, `server/src/services/dashboard.ts`, `server/src/controllers/user.ts`)**:
+  - Enforced `MAX_VISIT_DETAILS_ROWS` (`500`) on `getVisitDetails()`, `MAX_EXPORT_ROWS` (`5000`) guardrail on `exportReport()` (throwing clear HTTP `422` if exceeded instead of crashing serverless memory), `$limit` (`50` / `366`) on dashboard `headPerformance` / `trend` pipelines, and `MAX_USERS_LIST_LIMIT` (`500`) on `listUsers`.
+- **Atlas M0 Index Hygiene & Compound Indexes**:
+  - Removed duplicate `index: true` declarations already covered by `unique: true` or compound prefix indexes across `User.ts`, `Category.ts`, `Setting.ts`, `AuditEvent.ts`, `Notification.ts`, `PushSubscription.ts`, `FileAsset.ts`, and `Visit.ts`.
+  - Added justified compound indexes for production access patterns:
+    - `Visit`: `{ plannedDate: -1, status: 1 }`, `{ assignedTo: 1, status: 1, plannedDate: -1 }`, `{ followUpDate: 1, status: 1 }`.
+    - `Notification`: `{ recipient: 1, readAt: 1 }`.
+    - `Client`: `{ isActive: 1, createdAt: -1 }`.
+    - `AuditEvent`: `{ actor: 1, timestamp: -1 }`.
+- **Known Limitations & Pending Verification**:
+  - Query execution plans and index hit ratios are locally validated against `MongoMemoryServer`; production explain plans against populated MongoDB Atlas M0 data await live deployment verification.
+- **Verification**:
+  - `npm run lint`, `npm run build:server`, `npm run build`: **0 errors**.
+  - `npm run test:server`: **101 / 101 tests passing** across 9 suites (including 3 new optimization/index tests in `server/tests/step3-atlas-optimization.test.ts`).
+
+### Step 4 — Cloudinary Upload Ceiling & Replacement/Orphan Safety (Completed & Locally Verified)
+- **Signed Direct Upload Flow (Bypassing Vercel 4.5 MB Request Body Ceiling)**:
+  - Added `POST /api/files/sign-upload` (`server/src/routes/file.ts`, `server/src/controllers/file.ts`, `server/src/services/storage/storage.service.ts`) validating entity write access (`verifyEntityAccess`), MIME allowlists, per-category size caps (`5MB` avatars/logos, `10MB` visiting cards/visit photos, `25MB` documents/attachments), sanitized filenames, and file magic bytes (`headerHex`), then returning a short-lived `HS256` `uploadIntentToken` (10 min TTL) and signed upload parameters (`type: 'authenticated'`, folder-scoped `etech_crm/<ownerType>/<ownerId>/...`). `CLOUDINARY_API_SECRET` and `JWT_SECRET` never leave the backend.
+  - Added `POST /api/files/register` validating the `uploadIntentToken` signature/ownership/folder prefix, verifying the uploaded object directly against the storage provider via `getAssetMetadata` (`cloudinary.api.resource` in production, `MockStorageProvider` in local/test mock mode), rejecting and deleting mismatched resource types, formats (`ALLOWED_FORMATS_FOR_MIME`), or oversized uploads, and registering the asset idempotently (safe retries return HTTP `200` with `idempotent: true` without duplicating `FileAsset` rows).
+  - Updated `src/components/ui/FileUpload.tsx` to read the first 16 bytes for `headerHex`, obtain signed parameters from `POST /api/files/sign-upload`, upload binaries directly to Cloudinary when `mode === 'cloudinary'`, finalize via `POST /api/files/register`, and fall back to `/api/files/upload` only in local mock mode (`mode === 'mock'`). Preserved `/api/files/:id/view` authenticated proxy streaming.
+- **Safe Single-Slot Replacement & Rollback Isolation**:
+  - Extracted shared `finalizeAssetPersistence()` so single-slot assets (`USER_AVATAR`, `CLIENT_VISITING_CARD`, `ORGANIZATION_EXPANDED_LOGO`, `ORGANIZATION_COLLAPSED_LOGO`) read their previous asset pointer before writing, persist the new `FileAsset` and update the owner entity pointer first, and retire/archive/delete the previous asset **only after** new persistence succeeds.
+  - On MongoDB persistence or reference-update failure, rolls back **only** the newly uploaded asset (logging `FILE_UPLOAD_ROLLBACK_FAILED` if cleanup throws) while leaving prior single-slot references and cloud objects intact. If deleting a retired old asset fails, marks it `isArchived: true` with `metadata.pendingCloudDelete: true` and writes `FILE_ORPHAN_CLEANUP_PENDING` audit logs without failing the new upload.
+  - Fixed `handleDelete` in `src/components/ui/FileUpload.tsx` to call `DELETE /api/files/:id` when `currentAssetId` exists instead of clearing local React state alone, and synced `avatarAsset` state in `src/features/settings/SettingsPage.tsx`. Multi-asset history (`CLIENT_DOCUMENT`, `VISIT_PHOTO`, `VISIT_ATTACHMENT`) remains preserved.
+- **Super Admin Orphan Detection & Safe Cleanup**:
+  - Added `GET /api/files/storage/orphans` (dry-run scan) and `POST /api/files/storage/orphans/cleanup` (Super Admin only), plus a UI scan/cleanup panel in `src/features/settings/StorageDashboard.tsx`.
+  - Enforces a strict minimum age threshold (`minAgeHours >= 1`, default `24`), folder/ownership boundary matching (`VALID_PREFIX_PATTERN`), idempotent cleanup of deferred `pendingCloudDelete` records, unregistered cloud uploads under `etech_crm/`, and optional (`verifyCloud: true`) archival of stale DB records missing from cloud storage — writing `FILE_ORPHAN_AUDIT` / `FILE_ORPHAN_CLEANUP` audit events while leaving active and recent (`< minAgeHours`) uploads untouched.
+- **Local Verification Results vs Pending Live Production Verification**:
+  - **Local Verification (Passed against MockStorageProvider & MongoMemoryServer)**:
+    - `npm run lint`, `npm run build:server`, `npm run build`: **0 errors**.
+    - `npm run test:server`: **105 / 105 tests passing** across 10 suites (including 4 new regression tests in `server/tests/step4-cloudinary-upload.test.ts` covering RBAC/secret isolation, oversized >4.5MB intent signing, token/metadata verification, idempotent retry, rollback isolation, safe replacement, deferred deletion flagging, and age-guarded orphan cleanup).
+  - **Pending Live Cloud / Vercel Verification (Not Executed Locally)**:
+    - End-to-end browser-to-live-Cloudinary CORS / FormData upload of a >4.5MB file through deployed Vercel frontend & serverless backend (`POST /api/files/sign-upload` → Cloudinary → `POST /api/files/register` → `/api/files/:id/view`).
+    - Live `cloudinary.api.resource` and `cloudinary.api.resources` pagination latency against populated Cloudinary account within Vercel's 10s serverless execution budget.
+
+### Step 5 — Serverless Push Notification Reliability & Daily Follow-up Automation (Completed & Locally Verified)
+- **Serverless-Safe Web Push Delivery (`server/src/services/push.ts`, `server/src/services/notification.ts`, `server/src/models/Notification.ts`)**:
+  - Eliminated unawaited fire-and-forget `void sendPushToUser(...)` calls in `createNotification()` / `createIdempotentNotification()`; push delivery is now explicitly `await`ed before the serverless handler returns, wrapped in error-safe isolation so push failures never crash parent CRM workflows.
+  - Implemented `sendPushToUserDetailed()` (preserving `sendPushToUser()` `{ sent, failed }` return shape for existing callers) with bounded per-user subscription queries (`MAX_SUBSCRIPTIONS_PER_USER = 10`), explicit socket + promise race timeout (`PUSH_REQUEST_TIMEOUT_MS = 3000`), bounded retry logic (`PUSH_MAX_RETRIES = 1`, `PUSH_RETRY_DELAY_MS = 150`) only on transient `408`/`429`/`>=500`/network timeout failures, `Promise.allSettled` device isolation, and automatic deletion of expired/unsubscribed endpoints returning HTTP `410`/`404`.
+  - Added idempotent notification ledger fields on `Notification` (`deliveryKey` unique sparse index, `pushStatus`, `pushAttemptedAt`, `pushStats`) and atomic claim transition (`PENDING` -> `IN_PROGRESS`) before dispatch so retried requests never send duplicate push alerts for the same notification or `deliveryKey`. Sensitive values (`endpoint`, `keys`, `VAPID_PRIVATE_KEY`, `JWT_SECRET`, `CRON_SECRET`) are never logged.
+- **Independent Checkout Follow-Up Task Workflow (`FollowUpTask.ts`, `visit.ts`, `followupTask.ts`, `routes/followup.ts`)**:
+  - Updated `visit.ts:complete()` so setting `followUpDate` during checkout preserves the original visit permanently as `COMPLETED` (never reopening its historical status) and idempotently upserts an independently trackable `FollowUpTask` (`unique` on `sourceVisit`) linked to `sourceVisit`, `client`, `assignedTo`, `marketingHeadAtCreation` (historical Marketing Head attribution), `dueDate`, `remarks`, and lifecycle states (`PENDING`, `COMPLETED`, `CANCELLED`).
+  - Added RBAC-scoped API endpoints `GET /api/follow-ups`, `POST /api/follow-ups/:id/complete`, and `POST /api/follow-ups/:id/cancel`: Super Admin has org-wide access, Marketing Head has operational access scoped to current team members (via `User.reportingTo`), and Executives see/complete only their own follow-up tasks, while `FollowUpTask.marketingHeadAtCreation` and `Visit.marketingHeadAtAssignment` preserve historical attribution across team reassignments.
+- **Vercel Cron-Compatible Daily Follow-up Automation (`server/src/services/followup.ts`, `server/src/controllers/cron.ts`, `server/src/routes/cron.ts`, `server/src/models/CronJobRun.ts`)**:
+  - Implemented `GET /api/cron/follow-ups` and `POST /api/cron/follow-ups` secured by `requireCronSecret` checking `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret` using constant-time SHA-256 `crypto.timingSafeEqual` (fail-closed HTTP `503` if unconfigured or `< 32` chars; HTTP `401` on missing/invalid secret; `env.ts` also rejects non-empty `CRON_SECRET < 32` chars outside test mode).
+  - Resolved timezone-aware business-day boundaries cleanly in Node `Intl.DateTimeFormat` (`resolveBusinessDayWindow`, defaulting to `FOLLOWUP_TIMEZONE=Asia/Kolkata`) without external packages or exact-second assumptions.
+  - Queries bounded due `PENDING` `FollowUpTask` items (via `{ dueDate: 1, status: 1 }` index, covering checkout follow-ups from `COMPLETED` visits while excluding `COMPLETED`/`CANCELLED` tasks and cancelled source visits) plus any open active visits (`PLANNED`, `ASSIGNED`, `ARRIVED`, `CHECKED_IN` via `{ followUpDate: 1, status: 1 }`), bounded to `MAX_CRON_VISITS_PER_RUN = 200` and `DEFAULT_CRON_TIME_BUDGET_MS = 7500`.
+  - Respects user `isActive`, `isArchived`, `notificationPreferences.dailyProductivity`, and `notificationPreferences.mobilePush`.
+  - Enforces overlapping-run lease locking (`CronJobRun` with unique sparse `lockKey` and 30-day TTL index `expiresAt`), canonical `deliveryKey` deduplication (`followup:<dateKey>:<visitId>:<recipientId>`) across both `FollowUpTask` and `Visit` sources, and structured execution counters.
+  - Added `'FOLLOW_UP_REMINDER'` support in `Notification.ts`, `src/types/index.ts`, and `src/lib/useForegroundNotifications.ts` (`dailyProductivity` banner preference enforcement) while preserving existing polling, Service Worker duplicate-tag suppression, and read/delete APIs.
+- **Vercel Scheduling & Environment Requirements (`vercel.json`, `.env.example`, `server/src/config/env.ts`)**:
+  - Configured daily cron schedule in `vercel.json` (`"path": "/api/cron/follow-ups"`, `"schedule": "30 3 * * *"` -> 03:30 UTC / 09:00 IST, once daily, compatible with Vercel Hobby tier limits; `app.ts` `requireSameOrigin` skips `GET` and allows Vercel Cron bearer calls).
+  - Required Vercel Environment Variables: `CRON_SECRET` (`>= 32` chars, automatically sent by Vercel Cron in `Authorization: Bearer`), `FOLLOWUP_TIMEZONE` (default `Asia/Kolkata`), `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`.
+- **Known Limitations & Pending Live Verification**:
+  - **Live Vercel & Push Service Verification Pending**: Vercel Cron execution in deployed Vercel production (Hobby tier timing window), live browser push delivery via FCM/Mozilla/Apple endpoints with production VAPID keys, and live Atlas M0 query telemetry have **not** been executed locally; all Step 5 tests used `MongoMemoryServer` and an injected `PushSender` transport mock.
+- **Local Verification Results**:
+  - `npm run lint`: **0 errors**.
+  - `npm run build:server`: **0 errors**.
+  - `npm run build`: **0 errors**.
+  - `npm run test:server`: **112 / 112 tests passing** across **11 suites** (including 7 comprehensive regression tests in `server/tests/step5-push-cron.test.ts`).
+
+### Step 6 — Observability, Readiness Diagnostics & Frontend Performance/Resilience (Completed & Locally Verified)
+- **Backend Observability & Request Correlation (`server/src/middleware/requestContext.ts`, `server/src/middleware/error.ts`, `server/src/app.ts`)**:
+  - Implemented `requestContextMiddleware` validating inbound `X-Request-Id` against `^[A-Za-z0-9_-]{8,64}$`, generating a fresh `crypto.randomUUID()` when missing/invalid, and echoing `X-Request-Id` on every API response.
+  - Propagated `requestId` into structured `[API Error]` logs and JSON error responses (`error.requestId`), enhanced `maskSensitiveText` to strip `mongodb(+srv)://`, `cloudinary://`, `api_key`, `api_secret`, `token`, `password`, `cron_secret`, and `Bearer` credentials, and added bounded `[Slow Request]` telemetry warnings (`>= 2500ms`) logging only method, path, statusCode, durationMs, and requestId.
+- **Health & Super Admin Diagnostics (`server/src/controllers/health.ts`, `server/src/controllers/cron.ts`, `server/src/routes/cron.ts`)**:
+  - Upgraded `GET /api/health` (`handleHealthCheck`) to verify live MongoDB connectivity (`mongoose.connection.readyState === 1` + bounded `2000ms` `db.admin().ping()`), returning HTTP `200` (`{ status: 'ok', database: 'connected' }`) when ready and HTTP `503` (`{ status: 'degraded', database: 'disconnected' }`) when disconnected/failing, exposing zero secrets, URIs, or stack traces.
+  - Added `GET /api/cron/runs` (`requireAuth` + `requireRoles('SUPER_ADMIN')`, moving `requireCronSecret` specifically onto `/follow-ups`) returning at most the latest 10 `CronJobRun` entries (`status`, `durationMs`, timestamps, safe `counters`, masked `errorMessage`, excluding lock fields) plus boolean readiness `diagnostics` (`cronSecretConfigured`, `vapidConfigured`, `followUpTimezone`).
+- **Frontend Route Splitting & Bundle Optimization (`src/app/App.tsx`, `vite.config.ts`)**:
+  - Converted `LoginPage`, `DashboardPage`, `ModulePage`, `ReportsPage`, and `SettingsPage` to route-level `React.lazy()` imports wrapped in `<Suspense fallback={<LoadingState />}>`, preserving all existing route role guards, login flow, React Query behavior, and navigation.
+  - Configured `manualChunks` in `vite.config.ts` (`react-vendor`, `charts-vendor`, `query-vendor`, `icons-vendor`) without altering Vite's default 500 kB warning limit.
+  - Reduced initial entry JS bundle from **1,288.58 kB** (`330.55 kB` gzip) to **58.42 kB** (`13.05 kB` gzip), eliminating all Vite `> 500 kB` chunk warnings (`react-vendor`: 476.62 kB / 145.74 kB gzip, `charts-vendor`: 421.41 kB / 116.24 kB gzip, `SettingsPage`: 112.44 kB, `ModulePage`: 90.31 kB, `DashboardPage`: 21.19 kB, `ReportsPage`: 20.77 kB, `LoginPage`: 4.82 kB).
+- **Frontend Error Resilience (`src/components/ui/ErrorBoundary.tsx`, `src/lib/api.ts`, `src/features/auth/AuthProvider.tsx`, `src/main.tsx`)**:
+  - Added reusable `ErrorBoundary` wrapping root `<App />` (`src/main.tsx`) and route outlets (`resetKey={location.pathname}` in `src/app/App.tsx`), displaying safe recovery controls ("Try again", "Return to Dashboard") without ever showing raw stack traces.
+  - Added `AbortController` timeout support (`DEFAULT_API_TIMEOUT_MS = 15000`) to `apiFetch`, preserving external `AbortSignal` and custom `RequestInit` options, cleaning up timers/listeners in `finally`, distinguishing `TIMEOUT` vs `ABORTED` vs `NETWORK` errors, and subscribing `AuthProvider` via `onUnauthorizedResponse` for protected-route `401` expiry cleanup without triggering redirect loops on `/auth/login`, `/auth/me`, `/auth/logout`, or `/auth/bootstrap`.
+- **Remaining Production Gaps (Deferred to Step 7 / Post-Step 6)**:
+  - Automated/documented MongoDB Atlas M0 backup & restore verification runbook (M0 free tier lacks Atlas continuous cloud backup).
+  - Documentation synchronization (`README.md` phase status update) and live production smoke verification across deployed Vercel + Atlas M0 + Cloudinary + Web Push + Vercel Cron infrastructure.
+- **Local Verification Results vs Live Production Verification**:
+  - **Local Verification**:
+    - `npm run lint`: **0 errors**.
+    - `npm run build:server`: **0 errors**.
+    - `npm run build`: **0 errors**, **0 Vite chunk size warnings**.
+    - `npm run test:server`: **117 / 117 tests passing** across **12 suites** (including 5 new regression suites in `server/tests/step6-observability-readiness.test.ts` testing `/api/health`, `X-Request-Id`/masking/slow-request telemetry, `GET /api/cron/runs` RBAC, `apiFetch` timeout/`AbortSignal`/`401` handling, and `ErrorBoundary`/lazy route guards).
+  - **Pending Live Cloud Verification (Not Executed Locally)**:
+    - Deployed `https://<prod-domain>/api/health` check against live Atlas M0, Vercel runtime log correlation checks, and real-browser cold-start chunk loading telemetry.
+
+### Step 7 — Backup, Disaster Recovery & Production Go-Live Readiness (Implemented & Locally Verified)
+- **Encrypted MongoDB Logical Backup (`server/src/services/backup.ts`, `server/src/scripts/backupDb.ts`, `server/src/scripts/verifyBackup.ts`)**:
+  - Implemented `createEncryptedBackup` & `decryptAndVerifyBackup` using **BSON EJSON** (`mongoose.mongo.BSON.EJSON` with `{ relaxed: false }`) preserving exact `ObjectId`, `Date`, `number`, and `boolean` types across all durable CRM collections (`users` including `passwordHash`, `organizations`, `categories`, `settings`, `clients`, `visits`, `followuptasks`, `notifications`, `pushsubscriptions`, `fileassets`, `auditevents`, `cronjobruns`) while explicitly excluding ephemeral `ratelimitbuckets`.
+  - Encrypted with `AES-256-GCM` requiring an exact 64-character hex `BACKUP_ENCRYPTION_KEY` (32 bytes, never stored in git or hardcoded), 12-byte random IV, authenticated header `AAD`, inner SHA-256 integrity checksum inside the compressed payload, and ciphertext binary format `ETECHBK1` exposing zero plaintext hashes, collection names, or counts outside the encrypted envelope. Added `npm run backup:db` and `npm run backup:verify` scripts.
+- **Strictly Non-Destructive Restore & Cross-Reference Verification (`server/src/scripts/restoreVerifyDb.ts`)**:
+  - `assertSafeRestoreTargetUri` & `restoreEncryptedBackupToIsolatedTarget` reject production `MONGODB_URI` targets (`403`) regardless of any flags and reject non-empty targets (`409`) without dropping collections or overwriting existing records.
+  - Restores safely into an isolated `RESTORE_TARGET_MONGODB_URI` database, creates indexes via `collection.createIndex` (**never `syncIndexes()`**, preserving unrelated/custom indexes), and executes `verifyRestoredDatabaseIntegrity` validating collection counts, `User.passwordHash`, `PushSubscription`, historical Marketing Head attribution (`Visit.marketingHeadAtAssignment`, `FollowUpTask.marketingHeadAtCreation`), cross-collection references, and logical snapshot skew warnings (since Atlas M0 has no PITR snapshots). Added `npm run restore:db:verify`.
+- **Cloudinary Metadata-to-Cloud Reconciliation (`reconcileCloudinaryMetadata`)**:
+  - Added read-only cross-checking of restored `FileAsset` records against Cloudinary assets under `etech_crm/` to flag `missingInCloud`, `unregisteredInDb`, and `archivedPendingCloudDelete` without modifying or deleting any live Cloudinary media. Documented off-cloud media backup boundaries cleanly.
+- **Scheduled GitHub Actions Backup Workflow (`.github/workflows/atlas-m0-backup.yml`)**:
+  - Implemented daily (`0 21 * * *` UTC / 02:30 IST) + manual `workflow_dispatch` workflow using GitHub Secrets (`MONGODB_URI`, `BACKUP_ENCRYPTION_KEY`, optional `BACKUP_ALERT_WEBHOOK_URL`), verifying every backup immediately after creation, uploading only encrypted `.enc` artifacts (`retention-days: 30`), masking secrets, and documenting GitHub-hosted dynamic IP constraints against Atlas M0 (recommending self-hosted static-IP runners or scoped temporary Atlas Admin API allowlisting instead of `0.0.0.0/0`).
+- **Deployment Checklist & Documentation (`docs/PRODUCTION_DEPLOYMENT.md`, `README.md`, `.env.example`)**:
+  - Created comprehensive go-live runbook covering Vercel, custom HTTPS domain, Atlas M0 pooling/network controls, Cloudinary CORS & media backup limits, VAPID, `CRON_SECRET`, `BACKUP_ENCRYPTION_KEY`, `npm run migrate:roles`, and an 11-area end-to-end post-deployment smoke test playbook. Synced `README.md` and `.env.example` cleanly.
+- **Verification Matrix (Local vs. Live Infrastructure)**:
+  - **Locally Verified (Executed cleanly)**:
+    - `npm run lint`: **0 errors**.
+    - `npm run build:server`: **0 errors**.
+    - `npm run build`: **0 errors**, **0 Vite chunk size warnings**.
+    - `npm run test:server`: **120 / 120 tests passing** across **13 suites** (including `server/tests/step7-backup-readiness.test.ts` testing encrypted roundtrip, weak/wrong/tampered key rejection, `ObjectId`/`Date`/`passwordHash`/`PushSubscription` preservation, `RateLimitBucket` exclusion, isolated `MongoMemoryServer` restore, production-target & non-empty target guards, unrelated custom index preservation, unchanged source DB, and read-only Cloudinary metadata reconciliation).
+  - **GitHub Actions Workflow Implementation**:
+    - `.github/workflows/atlas-m0-backup.yml` authored and validated structurally in repo; live runner execution awaits repository push + GitHub Secrets setup.
+  - **Pending Live Infrastructure Verification (Not Executed Locally)**:
+    - Actual scheduled GitHub Actions backup run against live MongoDB Atlas M0.
+    - Actual restore verification test into a live staging Atlas M0 database (`RESTORE_TARGET_MONGODB_URI`).
+    - Live Vercel deployment smoke checks across custom HTTPS domain, live Cloudinary >4.5 MB browser upload, live FCM/Mozilla/Apple Web Push notifications, and live Vercel Hobby Cron invocation (`GET /api/cron/follow-ups` / `GET /api/cron/runs`).
+
+### Step 7.1 — Backup & Disaster Recovery Audit Remediation (Completed & Locally Verified)
+- **Production Restore Target Identity Protection (`server/src/services/backup.ts`, `server/src/scripts/restoreVerifyDb.ts`)**:
+  - Replaced `new URL()` host parsing with dedicated `normalizeMongoTargetIdentity` parser handling `mongodb://`, `mongodb+srv://`, comma-separated replica-set seedlists, explicit ports/loopback normalization (`127.0.0.1` / `localhost` / `::1`), `replicaSet` parameters, `.mongodb.net` cluster suffixes, and database names cleanly.
+  - Made `assertSafeRestoreTargetUri` **fail closed** (`422`) when either `MONGODB_URI` or `RESTORE_TARGET_MONGODB_URI` is unset/missing an explicit database name, and fail closed (`403`) on overlapping hosts, matching Atlas cluster suffixes, matching replica sets, or uncertain cross-scheme identities without any bypass flags.
+  - Embedded keyed HMAC `sourceDbFingerprint` strictly inside the encrypted `LogicalBackupPayload` and verified target identity against the decrypted fingerprint before touching any target collection.
+- **Complete Cloudinary Reconciliation Pagination (`server/src/services/storage/cloudinary.provider.ts`, `mock.provider.ts`, `storage.interface.ts`, `backup.ts`)**:
+  - Added `listAllAssetsByPrefix` supporting complete multi-page `next_cursor` enumeration for both `'image'` and `'raw'` assets (preserving bounded `listAssetsByPrefix` for HTTP/cron contexts).
+  - Removed silent `.limit(500)` / `.limit(2000)` DB caps in `reconcileCloudinaryMetadata`, scanning `fileassets` via cursor batching (`.batchSize(250)`), adding `complete`, `truncated`, and `scanError` fields to `CloudinaryReconciliationReport`, and strictly guaranteeing `missingInCloud: []` whenever enumeration is truncated or errors.
+- **Complete Post-Restore Integrity Validation (`verifyRestoredDatabaseIntegrity` in `server/src/services/backup.ts`)**:
+  - Expanded integrity validation across `User.reportingTo`, `User.avatarAsset`, `Organization.expandedLogoAsset` / `collapsedLogoAsset`, `Client.createdBy`, `Client.categoryId`, `Client.visitingCardAsset`, `Client.documentAssets[]`, `Visit.photoAssets[]` / `attachmentAssets[]`, `FileAsset.uploadedBy`, and `FileAsset.ownerId` per `ownerType` (`USER_AVATAR`, `CLIENT_*`, `VISIT_*`, `ORGANIZATION_*_LOGO`), handling nullable/optional fields and archived `FileAsset` records without false positives and reporting structured `IntegrityViolation` entries (`collection`, `documentId`, `field`, `missingRef`).
+- **Backup Memory Batching & Safeguards (`createEncryptedBackup`, `restoreEncryptedBackupToIsolatedTarget`)**:
+  - Replaced unbounded `.toArray()` / single-call `insertMany()` with `BACKUP_CURSOR_BATCH_SIZE = 500` cursor iteration, chunked inserts, and explicit `MAX_BACKUP_TOTAL_DOCUMENTS` (`500,000`) / `MAX_BACKUP_SERIALIZED_BYTES` (`256 MB`) guardrails.
+- **CI Alert Workflow, CLI Hardening & Operational Docs (`.github/workflows/atlas-m0-backup.yml`, `backupDb.ts`, `verifyBackup.ts`, `package.json`, `docs/PRODUCTION_DEPLOYMENT.md`)**:
+  - Removed invalid `secrets.*` reference from workflow `if: failure()`, checking `BACKUP_ALERT_WEBHOOK_URL` cleanly inside Node via `env:` with timeout and redacted failure logs that never mask original backup failures.
+  - Added cross-platform `npm run backup:db:verified` (`--verify`), minimized default `verifyBackup.ts` stdout metadata (optional `--verbose`), warned/failed exit status in `restoreVerifyDb.ts` when Cloudinary reconciliation is incomplete, and documented **Encryption Key Recovery & Rotation**, **12-Step Staging Restore Drill**, **Interrupted Restore Manual Recovery**, and **Windows NTFS ACLs vs POSIX `0o600`**.
+- **Local Verification Results**:
+  - `npm run lint`: **0 errors**.
+  - `npm run build:server`: **0 errors**.
+  - `npm run build`: **0 errors**, **0 Vite chunk warnings**.
+  - `npm run test:server`: **123 / 123 tests passing** across **13 suites** (adding Step 7.1 regression tests 4–6 in `server/tests/step7-backup-readiness.test.ts`).
+
+### Step 7.3 — Final Backup Security & Integrity Remediation (Completed & Locally Verified)
+- **Cloudinary Repeated-Cursor & Pagination Protection (`server/src/services/storage/cloudinary.provider.ts`, `storage.interface.ts`, `mock.provider.ts`, `server/src/services/backup.ts`)**:
+  - Added `seenCursors` repeated-cursor detection, `maxPages` (`DEFAULT_CLOUDINARY_LIST_MAX_PAGES = 100`), and `maxDurationMs` (`DEFAULT_CLOUDINARY_LIST_MAX_RUNTIME_MS = 60000`) guards in `CloudinaryStorageProvider.listAllAssetsByPrefix` and `MockStorageProvider.listAllAssetsByPrefix`, returning explicit `truncated: true` + `terminationReason` (`MAX_PAGES`, `MAX_RUNTIME_MS`, `REPEATED_CURSOR`).
+  - Updated `reconcileCloudinaryMetadata` to track assets by canonical `${resourceType}:${deliveryType}:${publicId}` key, deduplicate `unregisteredInDb` across pages, treat `listAssetsByPrefix`-only fallbacks strictly as `complete: false, truncated: true`, and enforce `missingInCloud: []` on any incomplete scan without calling deletion APIs.
+- **Organization Branding Logo Ownership Lifecycle (`server/src/services/storage/storage.service.ts`, `server/src/services/organization.ts`, `src/features/settings/OrganizationSettings.tsx`)**:
+  - Defined explicit `PENDING_ORGANIZATION_OWNER_ID` (`000000000000000000000001`) placeholder lifecycle handling: uploads resolve existing `Organization._id` immediately when present, mark pre-organization uploads explicitly as `metadata.ownershipStatus = 'PENDING_ORGANIZATION'` (rejecting arbitrary unknown IDs with `404`), and rebind `FileAsset.ownerId` -> real `Organization._id` (`ownershipStatus = 'ASSIGNED'`) once created/updated while rolling back failed uploads safely.
+  - Updated `verifyRestoredDatabaseIntegrity` to distinguish assigned org logos, explicitly pending unassigned logos (`pendingOrganizationLogosCount`), invalid/missing organization references, and archived cleanup records.
+- **Strengthened MongoDB Target & Connection Verification (`server/src/services/backup.ts`, `server/src/scripts/restoreVerifyDb.ts`)**:
+  - Added `extractConnectionIdentity` + `validateTargetConnectionMatchesUriAndNotProdOrSource` checking actual driver host(s), `.mongodb.net` cluster suffix, `replicaSet`, and connected `databaseName` against `RESTORE_TARGET_MONGODB_URI`, production `MONGODB_URI` (including empty production DBs), and encrypted `sourceDbFingerprint` (preventing programmatic URI/connection mismatch bypasses).
+  - Hardened URI parsing for encoded credentials (rejecting unescaped `/` before `@`), bare/bracketed IPv6 literals via `net.isIPv6`, IPv6-safe `extractAtlasClusterSuffix`, and non-Atlas same-scheme `mongodb://` ambiguity (refusing restores sharing a `dbName` unless distinct explicit `replicaSet` names exist).
+- **Streaming V2 Encrypted Backup & Restore Pipeline (`server/src/services/backup.ts`, `backupDb.ts`, `verifyBackup.ts`)**:
+  - Implemented **V2 (`ETECHBK1`, version `2`)** streaming ND-EJSON (`HEADER` -> single-pass 500-doc cursor `DOC` lines -> `FOOTER` + trailing 16-byte GCM authTag) piped through `zlib.createGzip()` and `AES-256-GCM`, written atomically via `.tmp-*` -> `fs.rename` in `createEncryptedBackupToFile` and verified/restored via 2-pass `verifyBackupFile` / `restoreEncryptedBackupFromFile` / `restoreEncryptedBackupToIsolatedTarget` without accumulating source `collections` maps in memory or double-serializing EJSON, while retaining V1 backward compatibility and incremental `413` doc/byte enforcement.
+- **Complete Cross-Reference Integrity & Programmatic Consistency Enforcement (`verifyRestoredDatabaseIntegrity`, `RestoreConsistencyError`)**:
+  - Added validation for `PushSubscription.user`, `Organization.updatedBy`, `Visit.cancelledBy`, `Visit.exceptionAuthorizedBy`, `Visit.checkIn.exceptionApprovedBy`, `Visit.checkOut.exceptionApprovedBy`, `FollowUpTask.completedBy`, and `FollowUpTask.cancelledBy`, plus explicit violation reporting on unknown `FileAsset.ownerType`.
+  - Updated `restoreEncryptedBackupToIsolatedTarget` and `restoreEncryptedBackupFromFile` to throw `RestoreConsistencyError` (`422`) when counts/integrity checks fail, matching CLI failure semantics.
+- **Local Verification Results**:
+  - `npm run lint`: **0 errors**.
+  - `npm run build:server`: **0 errors**.
+  - `npm run build`: **0 errors**, **0 Vite chunk warnings**.
+  - `npm run test:server`: **129 / 129 tests passing** across **13 suites** (tests 1–12 in `server/tests/step7-backup-readiness.test.ts`).
 
 
 

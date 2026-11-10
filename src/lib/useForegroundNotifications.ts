@@ -587,35 +587,36 @@ export function useForegroundNotifications({
       // ignore quota errors
     }
 
+    const emitSuppressedDiagnostic = (item: NotificationItem, reason: string, detail: string) => {
+      emitDiagnostic({
+        notificationId: item._id,
+        tag: `crm-notif-${item._id}`,
+        title: item.title,
+        method: 'suppressed',
+        status: 'suppressed',
+        reason,
+        environment: getEnvironmentSnapshot('skipped'),
+        options: {
+          body: item.message,
+          icon: '/assets/notification-icon.png',
+          badge: '/assets/notification-badge.png',
+          tag: `crm-notif-${item._id}`,
+          silent: false,
+          requireInteraction: false,
+          renotify: true,
+        },
+        events: [{ type: 'suppressed', timestamp: Date.now(), detail }],
+      })
+    }
+
     // 3. Evaluate desktop notification preferences
     if (user?.notificationPreferences?.desktopAlerts === false) {
       newUnreadItems.forEach((item) => {
-        const suppressedReport: NotificationDiagnosticReport = {
-          notificationId: item._id,
-          tag: `crm-notif-${item._id}`,
-          title: item.title,
-          method: 'suppressed',
-          status: 'suppressed',
-          reason: 'User has disabled "Desktop notification banners" in Settings > General.',
-          environment: getEnvironmentSnapshot('skipped'),
-          options: {
-            body: item.message,
-            icon: '/assets/notification-icon.png',
-            badge: '/assets/notification-badge.png',
-            tag: `crm-notif-${item._id}`,
-            silent: false,
-            requireInteraction: false,
-            renotify: true,
-          },
-          events: [
-            {
-              type: 'suppressed',
-              timestamp: Date.now(),
-              detail: 'desktopAlerts preference is false',
-            },
-          ],
-        }
-        emitDiagnostic(suppressedReport)
+        emitSuppressedDiagnostic(
+          item,
+          'User has disabled "Desktop notification banners" in Settings > General.',
+          'desktopAlerts preference is false'
+        )
       })
       console.log('[NotificationPipeline] Suppressed: desktopAlerts disabled in preferences.')
       return
@@ -624,32 +625,20 @@ export function useForegroundNotifications({
     // 4. Deliver each new notification via the unified pipeline
     newUnreadItems.forEach((item) => {
       if (item.type === 'VISIT_ASSIGNED' && user?.notificationPreferences?.newEventCreated === false) {
-        const suppressedReport: NotificationDiagnosticReport = {
-          notificationId: item._id,
-          tag: `crm-notif-${item._id}`,
-          title: item.title,
-          method: 'suppressed',
-          status: 'suppressed',
-          reason: 'User has disabled "New visit assignments" alerts in Settings > General.',
-          environment: getEnvironmentSnapshot('skipped'),
-          options: {
-            body: item.message,
-            icon: '/assets/notification-icon.png',
-            badge: '/assets/notification-badge.png',
-            tag: `crm-notif-${item._id}`,
-            silent: false,
-            requireInteraction: false,
-            renotify: true,
-          },
-          events: [
-            {
-              type: 'suppressed',
-              timestamp: Date.now(),
-              detail: 'newEventCreated preference is false',
-            },
-          ],
-        }
-        emitDiagnostic(suppressedReport)
+        emitSuppressedDiagnostic(
+          item,
+          'User has disabled "New visit assignments" alerts in Settings > General.',
+          'newEventCreated preference is false'
+        )
+        return
+      }
+
+      if (item.type === 'FOLLOW_UP_REMINDER' && user?.notificationPreferences?.dailyProductivity === false) {
+        emitSuppressedDiagnostic(
+          item,
+          'User has disabled "Daily productivity update" reminders in Settings > General.',
+          'dailyProductivity preference is false'
+        )
         return
       }
 

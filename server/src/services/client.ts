@@ -1,8 +1,11 @@
+import mongoose from 'mongoose'
 import { Client } from '../models/Client.js'
 import { Category } from '../models/Category.js'
 import { recordAudit } from './audit.js'
 import { AppError } from '../utils/errors.js'
 import { User } from '../models/User.js'
+import type { AuthUser } from '../middleware/auth.js'
+import { isHeadRole } from '../middleware/auth.js'
 
 async function resolveCategory(input: Record<string, unknown>) {
   if (input.categoryId) {
@@ -52,15 +55,43 @@ export async function createClient(input: Record<string, unknown>, actor: string
   return client
 }
 
-export async function updateClient(id: string, input: Record<string, unknown>, actor: string) {
+export async function updateClient(id: string, input: Record<string, unknown>, actor: AuthUser | string) {
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(422, 'Invalid client ID')
+  }
+
+  const actorObj: AuthUser | null = typeof actor === 'string' ? null : actor
+  const actorId = typeof actor === 'string' ? actor : actor.id
+
+  const existing = await Client.findOne({ _id: id, isActive: true })
+  if (!existing) throw new AppError(404, 'Client not found')
+
+  // Enforce Marketing Head team isolation on client updates while keeping Super Admin org-wide access
+  if (actorObj && actorObj.role !== 'SUPER_ADMIN') {
+    if (isHeadRole(actorObj.role)) {
+      const createdById = String(existing.createdBy)
+      if (createdById !== actorId) {
+        const isTeamCreator = await User.exists({ _id: existing.createdBy, reportingTo: actorId })
+        if (!isTeamCreator) {
+          throw new AppError(403, 'You can only edit clients created by yourself or your team')
+        }
+      }
+    } else {
+      throw new AppError(403, 'You do not have permission to edit clients')
+    }
+  }
+
   await resolveCategory(input)
   const client = await Client.findOneAndUpdate({ _id: id, isActive: true }, { $set: input }, { new: true, runValidators: true })
   if (!client) throw new AppError(404, 'Client not found')
-  await recordAudit(actor, 'CLIENT_UPDATED', 'Client', id)
+  await recordAudit(actorId, 'CLIENT_UPDATED', 'Client', id)
   return client
 }
 
 export async function archiveClient(id: string, actor: string) {
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(422, 'Invalid client ID')
+  }
   const client = await Client.findOneAndUpdate({ _id: id, isActive: true }, { $set: { isActive: false } }, { new: true })
   if (!client) throw new AppError(404, 'Client not found')
   await recordAudit(actor, 'CLIENT_ARCHIVED', 'Client', id)

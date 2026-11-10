@@ -11,7 +11,7 @@ export async function postClient(req: Request, res: Response) {
 }
 
 export async function patchClient(req: Request, res: Response) {
-  return success(res, await updateClient(String(req.params.id), req.body, req.authUser!.id))
+  return success(res, await updateClient(String(req.params.id), req.body, req.authUser!))
 }
 
 export async function deleteClient(req: Request, res: Response) {

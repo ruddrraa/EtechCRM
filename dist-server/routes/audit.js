@@ -10,3 +10,7 @@ auditRouter.get('/', async (req, res) => {
     const [items, total] = await Promise.all([AuditEvent.find().populate('actor', 'name role').sort({ timestamp: -1 }).skip((page - 1) * limit).limit(limit).lean(), AuditEvent.countDocuments()]);
     return success(res, { items, page, limit, total, pages: Math.ceil(total / limit) });
 });
+auditRouter.delete('/', requireRoles('SUPER_ADMIN'), async (_req, res) => {
+    const result = await AuditEvent.deleteMany({});
+    return success(res, { cleared: true, deletedCount: result.deletedCount });
+});

@@ -1,23 +1,32 @@
-import { useState, useRef } from 'react'
-import { UploadCloud, X, FileText, CheckCircle2, AlertCircle, RefreshCw, Eye } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { UploadCloud, X, FileText, CheckCircle2, AlertCircle, RefreshCw, Eye, Download } from 'lucide-react'
 import { Button } from './Button'
+import { Modal } from './Modal'
+
+function extractAssetId(url?: string | null): string | null {
+  if (!url) return null
+  const match = url.match(/\/api\/files\/([a-f0-9]{24})/i)
+  return match ? match[1] : null
+}
 
 interface FileUploadProps {
-  ownerType: 'USER_AVATAR' | 'CLIENT_VISITING_CARD' | 'CLIENT_DOCUMENT' | 'VISIT_PHOTO' | 'VISIT_ATTACHMENT' | 'GENERAL'
+  ownerType: 'USER_AVATAR' | 'CLIENT_VISITING_CARD' | 'CLIENT_DOCUMENT' | 'VISIT_PHOTO' | 'VISIT_ATTACHMENT' | 'ORGANIZATION_EXPANDED_LOGO' | 'ORGANIZATION_COLLAPSED_LOGO' | 'GENERAL'
   ownerId: string
+  assetId?: string
   label?: string
   description?: string
   accept?: string
   maxSizeBytes?: number
   currentUrl?: string
   currentName?: string
-  onUploadSuccess?: (data: { asset: { _id: string; originalName: string; sizeBytes: number; mimeType: string }; signedUrl: string }) => void
+  onUploadSuccess?: (data: { asset: { _id: string; originalName: string; sizeBytes: number; mimeType: string }; viewUrl?: string; signedUrl: string }) => void
   onDeleteSuccess?: () => void
 }
 
 export function FileUpload({
   ownerType,
   ownerId,
+  assetId,
   label = 'Upload file',
   description = 'Drag & drop or click to select',
   accept = 'image/*,application/pdf',
@@ -30,9 +39,24 @@ export function FileUpload({
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [currentAssetId, setCurrentAssetId] = useState<string | null>(assetId || extractAssetId(currentUrl) || null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(currentUrl || null)
   const [fileName, setFileName] = useState<string | null>(currentName || null)
+  const [isViewerOpen, setIsViewerOpen] = useState(false)
+  const [isViewerLoading, setIsViewerLoading] = useState(true)
+  const [viewerError, setViewerError] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (assetId) {
+      setCurrentAssetId(assetId)
+    } else if (currentUrl) {
+      const extracted = extractAssetId(currentUrl)
+      if (extracted) setCurrentAssetId(extracted)
+    }
+    if (currentUrl) setPreviewUrl(currentUrl)
+    if (currentName) setFileName(currentName)
+  }, [assetId, currentUrl, currentName])
 
   const handleFile = async (file: File) => {
     setError(null)
@@ -56,6 +80,7 @@ export function FileUpload({
       const response = await fetch('/api/files/upload', {
         method: 'POST',
         body: formData,
+        credentials: 'include',
       })
 
       const json = await response.json()
@@ -65,10 +90,11 @@ export function FileUpload({
       }
 
       setFileName(file.name)
-      if (file.type.startsWith('image/')) {
-        setPreviewUrl(json.data.signedUrl || URL.createObjectURL(file))
+      if (json.data.asset?._id) {
+        setCurrentAssetId(json.data.asset._id)
+        setPreviewUrl(`/api/files/${json.data.asset._id}/view`)
       } else {
-        setPreviewUrl(json.data.signedUrl)
+        setPreviewUrl(json.data.viewUrl || json.data.signedUrl)
       }
 
       onUploadSuccess?.(json.data)
@@ -97,7 +123,9 @@ export function FileUpload({
   }
 
   const isMockUrl = previewUrl ? previewUrl.includes('mock-storage.local') : false
-  const isImage = !isMockUrl && previewUrl && (previewUrl.includes('.jpg') || previewUrl.includes('.jpeg') || previewUrl.includes('.png') || previewUrl.includes('.webp') || previewUrl.includes('image'))
+  const crmViewUrl = currentAssetId ? `/api/files/${currentAssetId}/view` : (previewUrl?.startsWith('/api/files/') ? previewUrl : null)
+  const isPdf = Boolean(fileName?.toLowerCase().endsWith('.pdf') || previewUrl?.toLowerCase().includes('.pdf'))
+  const isImage = !isMockUrl && !isPdf && (crmViewUrl || (previewUrl && (previewUrl.includes('.jpg') || previewUrl.includes('.jpeg') || previewUrl.includes('.png') || previewUrl.includes('.webp') || previewUrl.includes('image'))))
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
@@ -118,7 +146,7 @@ export function FileUpload({
           }}
         >
           <AlertCircle size={14} style={{ flexShrink: 0 }} />
-          <span>Local mock asset detected. Please click <strong>Replace</strong> below to upload to Cloudinary.</span>
+          <span>Local legacy file detected. Please click <strong>Replace</strong> below to upload to cloud storage.</span>
         </div>
       )}
 
@@ -132,21 +160,34 @@ export function FileUpload({
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: '0.75rem',
+            flexWrap: 'wrap',
             background: 'var(--surface)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: '180px', flex: 1 }}>
             {isImage ? (
               <img
                 src={previewUrl}
                 alt="Preview"
-                style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--border)' }}
+                style={{
+                  width: '44px',
+                  height: '44px',
+                  minWidth: '44px',
+                  minHeight: '44px',
+                  flexShrink: 0,
+                  objectFit: 'cover',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border)',
+                }}
               />
             ) : (
               <div
                 style={{
-                  width: '48px',
-                  height: '48px',
+                  width: '44px',
+                  height: '44px',
+                  minWidth: '44px',
+                  minHeight: '44px',
+                  flexShrink: 0,
                   borderRadius: '6px',
                   background: isMockUrl ? '#fef3c7' : 'var(--surface-muted, #f3f4f6)',
                   display: 'grid',
@@ -154,20 +195,20 @@ export function FileUpload({
                   color: isMockUrl ? '#b45309' : 'var(--muted)',
                 }}
               >
-                {isMockUrl ? <AlertCircle size={24} /> : <FileText size={24} />}
+                {isMockUrl ? <AlertCircle size={20} /> : <FileText size={20} />}
               </div>
             )}
-            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
               <span style={{ fontSize: '0.85rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {fileName || (isMockUrl ? 'Local mock file' : 'Attached file')}
+                {fileName || (isMockUrl ? 'Local legacy file' : 'Attached file')}
               </span>
               {isMockUrl ? (
                 <span style={{ fontSize: '0.75rem', color: '#d97706', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <AlertCircle size={12} /> Local test file (Needs replacement)
+                  <AlertCircle size={12} style={{ flexShrink: 0 }} /> Local test file (Needs replacement)
                 </span>
               ) : (
                 <span style={{ fontSize: '0.75rem', color: '#16a34a', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <CheckCircle2 size={12} /> Securely uploaded
+                  <CheckCircle2 size={12} style={{ flexShrink: 0 }} /> Securely uploaded
                 </span>
               )}
             </div>
@@ -177,7 +218,7 @@ export function FileUpload({
             {isMockUrl ? (
               <button
                 type="button"
-                onClick={() => alert('This file was saved in local mock storage before Cloudinary was configured and is not reachable on the network. Please click "Replace" to upload the file to Cloudinary.')}
+                onClick={() => alert('This file was saved in local temporary storage and is not reachable on the network. Please click "Replace" to upload the file to cloud storage.')}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -195,25 +236,19 @@ export function FileUpload({
                 <Eye size={13} /> View
               </button>
             ) : (
-              <a
-                href={previewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  padding: '6px 10px',
-                  fontSize: '0.75rem',
-                  border: '1px solid var(--border)',
-                  borderRadius: '4px',
-                  color: 'var(--foreground)',
-                  textDecoration: 'none',
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setIsViewerLoading(true)
+                  setViewerError(false)
+                  setIsViewerOpen(true)
                 }}
-                title="View full file"
+                title="View inside CRM"
               >
                 <Eye size={13} /> View
-              </a>
+              </Button>
             )}
             <Button
               type="button"
@@ -283,6 +318,86 @@ export function FileUpload({
           <AlertCircle size={14} />
           <span>{error}</span>
         </div>
+      )}
+
+      {/* CRM File Preview Modal */}
+      {isViewerOpen && (
+        <Modal title={`File Preview: ${fileName || 'Attached file'}`} onClose={() => setIsViewerOpen(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {isImage ? (
+              <div style={{ textAlign: 'center', padding: '1rem', background: 'var(--surface-muted, #f8fafc)', borderRadius: '8px', minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {isViewerLoading && (
+                  <div style={{ fontSize: '0.875rem', color: 'var(--muted)', padding: '2rem' }}>
+                    Loading file preview...
+                  </div>
+                )}
+                <img
+                  src={crmViewUrl || previewUrl || ''}
+                  alt={fileName || 'Preview'}
+                  onLoad={() => setIsViewerLoading(false)}
+                  onError={() => {
+                    setIsViewerLoading(false)
+                    setViewerError(true)
+                  }}
+                  style={{
+                    display: isViewerLoading ? 'none' : 'block',
+                    maxWidth: '100%',
+                    maxHeight: '60vh',
+                    objectFit: 'contain',
+                    borderRadius: '6px',
+                  }}
+                />
+                {viewerError && (
+                  <div style={{ color: '#e11d48', padding: '1.5rem', textAlign: 'center' }}>
+                    <AlertCircle size={24} style={{ margin: '0 auto 8px' }} />
+                    <p style={{ margin: 0, fontSize: '0.875rem' }}>Failed to load preview. Please use the Download button below.</p>
+                  </div>
+                )}
+              </div>
+            ) : isPdf ? (
+              <iframe
+                src={crmViewUrl || previewUrl || ''}
+                title={fileName || 'Document Preview'}
+                style={{ width: '100%', height: '60vh', border: '1px solid var(--border)', borderRadius: '6px' }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: '2.5rem 1rem', background: 'var(--surface-muted, #f8fafc)', borderRadius: '8px' }}>
+                <FileText size={44} style={{ color: 'var(--muted)', margin: '0 auto 10px' }} />
+                <p style={{ fontWeight: 500, margin: '0 0 4px', fontSize: '0.9rem' }}>{fileName || 'Document'}</p>
+                <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                  In-browser preview is not available for this format. Click Download below to view.
+                </span>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+              {crmViewUrl && (
+                <a
+                  href={`${crmViewUrl}?download=1`}
+                  download={fileName || 'download'}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    background: 'var(--primary, #dc2626)',
+                    color: '#ffffff',
+                    fontSize: '0.875rem',
+                    fontWeight: 500,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <Download size={15} /> Download
+                </a>
+              )}
+              <Button variant="secondary" onClick={() => setIsViewerOpen(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )

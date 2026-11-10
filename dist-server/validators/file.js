@@ -13,12 +13,16 @@ export const FILE_SIZE_LIMITS = {
     VISIT_PHOTO: 10 * 1024 * 1024, // 10MB
     CLIENT_DOCUMENT: 25 * 1024 * 1024, // 25MB
     VISIT_ATTACHMENT: 25 * 1024 * 1024, // 25MB
+    ORGANIZATION_EXPANDED_LOGO: 5 * 1024 * 1024, // 5MB
+    ORGANIZATION_COLLAPSED_LOGO: 5 * 1024 * 1024, // 5MB
     GENERAL: 25 * 1024 * 1024, // 25MB
 };
 // Allowed MIME types per owner type
 const ALLOWED_MIME_TYPES = {
     USER_AVATAR: ['image/jpeg', 'image/png', 'image/webp'],
     VISIT_PHOTO: ['image/jpeg', 'image/png', 'image/webp'],
+    ORGANIZATION_EXPANDED_LOGO: ['image/jpeg', 'image/png', 'image/webp'],
+    ORGANIZATION_COLLAPSED_LOGO: ['image/jpeg', 'image/png', 'image/webp'],
     CLIENT_VISITING_CARD: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
     CLIENT_DOCUMENT: [
         'application/pdf',

@@ -27,6 +27,12 @@ export async function logout(req: Request, res: Response) {
   return success(res, { loggedOut: true })
 }
 
+export async function logoutAll(req: Request, res: Response) {
+  if (req.authUser) await User.findByIdAndUpdate(req.authUser.id, { $inc: { tokenVersion: 1 } })
+  res.clearCookie('accessToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' })
+  return success(res, { loggedOutAll: true })
+}
+
 export async function me(req: Request, res: Response) {
   const user = await User.findById(req.authUser!.id)
   if (!user) throw new AppError(401, 'Session is no longer valid')

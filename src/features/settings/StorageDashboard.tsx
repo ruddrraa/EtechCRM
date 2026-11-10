@@ -60,7 +60,7 @@ export function StorageDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <HardDrive size={22} className="text-primary" />
           <div>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: 600, margin: 0 }}>Cloud Storage &amp; Media Overview</h2>
+            <h2 style={{ fontSize: '1.15rem', fontWeight: 600, margin: 0 }}>File &amp; Media Management</h2>
             <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--muted)' }}>
               Centralized file asset metrics, storage usage and recent uploads.
             </p>
@@ -70,7 +70,7 @@ export function StorageDashboard() {
         {stats && (
           <Badge tone={stats.isLiveCloudinary ? 'success' : 'neutral'}>
             <Cloud size={12} style={{ marginRight: '4px', display: 'inline' }} />
-            {stats.storageProvider} {stats.isLiveCloudinary ? '(Live Cloud)' : '(Dev Storage)'}
+            {stats.isLiveCloudinary ? 'File Storage Active' : 'Offline Dev Storage'}
           </Badge>
         )}
       </div>
@@ -96,7 +96,7 @@ export function StorageDashboard() {
               </div>
               <strong style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatBytes(stats.totalBytes)}</strong>
               <small style={{ display: 'block', fontSize: '0.72rem', color: 'var(--muted)', marginTop: '2px' }}>
-                * Aggregated from MongoDB asset metadata
+                * Aggregated from system asset records
               </small>
             </div>
           </div>

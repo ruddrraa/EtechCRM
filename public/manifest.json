@@ -1,0 +1,26 @@
+{
+  "short_name": "EtechCRM",
+  "name": "Excel Technologies and Services CRM",
+  "description": "Enterprise field sales, client management, GPS check-in and visit tracking platform.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#dc2626",
+  "icons": [
+    {
+      "src": "/assets/notification-icon.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/excel-collapsed-logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ]
+}
+

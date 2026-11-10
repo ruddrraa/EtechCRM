@@ -73,13 +73,14 @@ export class CloudinaryStorageProvider {
             throw new AppError(502, `Cloudinary asset deletion failed: ${msg}`);
         }
     }
-    async getSignedUrl(publicId, resourceType = 'image', _expiresInSeconds = 3600) {
+    async getSignedUrl(publicId, resourceType = 'image', expiresInSeconds = 3600) {
         this.ensureConfigured();
         const url = cloudinary.url(publicId, {
             resource_type: resourceType,
             type: 'authenticated',
             sign_url: true,
             secure: true,
+            expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
         });
         return url;
     }

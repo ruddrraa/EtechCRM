@@ -16,6 +16,13 @@ const userSchema = new Schema({
   isActive: { type: Boolean, default: true, index: true },
   isArchived: { type: Boolean, default: false, index: true },
   tokenVersion: { type: Number, default: 0 },
+  notificationPreferences: {
+    dailyProductivity: { type: Boolean, default: true },
+    newEventCreated: { type: Boolean, default: true },
+    mobilePush: { type: Boolean, default: true },
+    desktopAlerts: { type: Boolean, default: true },
+    emailSummary: { type: Boolean, default: false },
+  },
 }, { timestamps: true, versionKey: false })
 
 userSchema.methods.toSafeObject = function () {

@@ -1,14 +1,23 @@
 import { Notification } from '../models/Notification.js'
+import { sendPushToUser } from './push.js'
 
-export function createNotification(input: {
+export async function createNotification(input: {
   recipient: string
   title: string
   message: string
-  type: 'VISIT_ASSIGNED' | 'VISIT_CANCELLED' | 'VISIT_UPDATED'
+  type: 'VISIT_ASSIGNED' | 'VISIT_CANCELLED' | 'VISIT_UPDATED' | 'TEST'
   entityType?: 'Visit' | 'Client'
   entityId?: string
 }) {
-  return Notification.create(input)
+  const notif = await Notification.create(input)
+  void sendPushToUser(input.recipient, {
+    title: input.title,
+    body: input.message,
+    url: input.entityType === 'Visit' ? '/visits' : '/',
+    tag: `crm-notif-${String(notif._id)}`,
+    notificationId: String(notif._id),
+  }).catch(() => {})
+  return notif
 }
 
 export async function listNotifications(recipient: string, page = 1, limit = 20) {
@@ -30,4 +39,14 @@ export async function markNotificationRead(id: string, recipient: string) {
 export async function markAllNotificationsRead(recipient: string) {
   const result = await Notification.updateMany({ recipient, readAt: { $exists: false } }, { $set: { readAt: new Date() } })
   return { updated: result.modifiedCount }
+}
+
+export async function clearAllNotifications(recipient: string) {
+  const result = await Notification.deleteMany({ recipient })
+  return { deleted: result.deletedCount }
+}
+
+export async function deleteNotification(id: string, recipient: string) {
+  const result = await Notification.deleteOne({ _id: id, recipient })
+  return { deleted: result.deletedCount > 0 }
 }

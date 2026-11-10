@@ -23,6 +23,12 @@ export async function logout(req, res) {
     res.clearCookie('accessToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
     return success(res, { loggedOut: true });
 }
+export async function logoutAll(req, res) {
+    if (req.authUser)
+        await User.findByIdAndUpdate(req.authUser.id, { $inc: { tokenVersion: 1 } });
+    res.clearCookie('accessToken', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
+    return success(res, { loggedOutAll: true });
+}
 export async function me(req, res) {
     const user = await User.findById(req.authUser.id);
     if (!user)

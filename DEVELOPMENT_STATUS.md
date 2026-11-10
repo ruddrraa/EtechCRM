@@ -601,7 +601,60 @@ Remaining limitations:
   10. Client visiting card and document attachment listing.
 - **Total Test Suite**: **62 / 62 tests passing** (18 security + 18 category/maps/reports + 16 geofencing + 10 storage).
 - **TypeScript & Lint**: `npm run build:server` (0 errors), `npm run build` (0 errors), `npm run lint` (0 errors).
+## Phase 3.4.2 — Notification Verification, Session Security QA & Private File Streaming
+
+### 1. Real Notification System Audit & Implementation
+- **Separated Delivery Layers**:
+  - **In-App Notifications**: Backed by MongoDB `Notification` collection with dynamic polling and real-time read/unread management. Added `DELETE /api/notifications` (clear all) and `DELETE /api/notifications/:id` (delete individual item).
+  - **Desktop Browser Notifications**: Integrated native HTML5 `Notification` API with explicit user action gating (`requestDesktopNotificationPermission()`) and navigation on click.
+  - **Desktop & Mobile Web Push Notifications**: Integrated W3C Push API with standard VAPID authentication (`web-push`). Created MongoDB `PushSubscription` model storing endpoints, `p256dh`, and `auth` credentials. Added background `sendPushToUser` dispatching with automated cleanup of expired endpoints (HTTP 404/410).
+  - **PWA Manifest & Service Worker**: Added `public/manifest.json` with `display: standalone`, high-res icons, and `theme_color: #dc2626`. Added `public/sw.js` with `push` and `notificationclick` listeners capable of waking background windows and navigating to target URLs. Configured Apple Web Push meta tags (`apple-mobile-web-app-capable`) for iOS Safari 16.4+ Home Screen support.
+- **Persistent Notification Preferences**:
+  - Added `User.notificationPreferences` schema in MongoDB storing booleans for `dailyProductivity`, `newEventCreated`, `mobilePush`, `desktopAlerts`, and `emailSummary`.
+  - Added `PATCH /api/users/me/preferences` endpoint. Connected switch toggles in `SettingsPage.tsx` General tab to real API mutations.
+
+### 2. Session & Token Security QA
+- **HTTP-Only Cookie Architecture**: JWT tokens stored exclusively in `httpOnly`, `sameSite: 'lax'`, `secure: production` cookies.
+- **Token Versioning & Revocation**: Token version checked on every authenticated request (`payload.tokenVersion === user.tokenVersion`).
+- **Global Session Revocation**: Implemented `POST /api/auth/logout-all` endpoint which atomically increments `tokenVersion` in MongoDB and clears the browser cookie, immediately invalidating all active sessions across all devices. Added "Sign out of all devices" button in the Settings > Security tab.
+
+### 3. Global Search UI Refinement
+- **Bounded Dropdown Layout**: Refined `.search-results-dropdown` with `max-width: min(420px, calc(100vw - 32px))` and `overflow-x: hidden`, preventing horizontal scrollbars on mobile and desktop.
+- **Single-Line Truncation & Native Tooltip**: Client search entries display prominent organization names with single-line addresses truncated using `text-overflow: ellipsis; white-space: nowrap; overflow: hidden;` and full text preserved in `title` attributes for native hover tooltips.
+
+### 4. Private CRM File Viewer & Modal Integration (`GET /api/files/:id/view`)
+- **Direct Streaming Proxy**: Implemented `streamFileAsset` in `server/src/services/storage/storage.service.ts` and mounted `GET /api/files/:id/view`.
+- **Complete Elimination of Raw Cloudinary Navigation**: Persisted and returned URLs strictly use the `/api/files/:id/view` route. Never returns raw Cloudinary delivery URLs or HTTP 301/302 redirects to client browsers.
+- **Strict Access Control**: Enforces authentication (401) and strict entity/team RBAC (403 for unauthorized or cross-team access).
+- **Security & Caching Headers**: Sets `Content-Disposition: inline; filename="..."` (or `attachment` when `?download=1`), MIME type, `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-cache, no-store, must-revalidate`.
+- **Serverless-Compliant Pipelining**: Cloudinary assets are streamed directly via `Readable.fromWeb(upstream.body).pipe(res)` without RAM buffering, complying with Vercel serverless execution constraints.
+- **In-App Modal File Viewer (`FileUpload.tsx`)**: Clicking "View" opens an internal CRM modal with loading and error states, native `<img>` or `<iframe>` rendering, and an explicit "Download" button (`?download=1`).
+
+### 5. VAPID Configuration & Web Push Verification
+- **Environment Diagnostics**: Backend validates `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (`mailto:...`), logging `[WebPush] VAPID configured: true/false` on startup without leaking secrets.
+- **Public Key Endpoint**: Mounted `GET /api/notifications/push/vapid-key` publicly without requiring pre-authentication cookies, resolving the `"VAPID public key is not configured on the server"` frontend alert.
+- **Push Client**: `src/lib/pushClient.ts` fetches `/api/notifications/push/vapid-key` with credentials included, registers service worker subscriptions, and saves them to MongoDB `PushSubscription`.
+- **Preference Guard**: Push notifications verify `recipient.notificationPreferences?.mobilePush !== false` before dispatching.
+
+### 6. Foreground Desktop Notification Pipeline & Duplicate Suppression
+- **Pipeline Implementation (`useForegroundNotifications.ts`)**:
+  - Connected React Query notifications polling in `Topbar.tsx` to the native HTML5 `Notification` API.
+  - **Polling Frequency & Window Focus**: Adjusted query interval to `10000ms` (10 seconds) with `refetchOnWindowFocus: true` for near-instant notification detection upon returning to the window.
+  - **Historical Snapshot Suppression**: Upon initial mount or user login, seeds all existing notifications into `seenIdsRef` and `sessionStorage`, ensuring old unread notifications never re-fire as spam upon page load or refresh.
+  - **Duplicate Suppression**: Tracks seen notification IDs across renders and sessions, and supplies deterministic OS-level tags (`crm-notif-${item._id}`) to `new Notification()` so the OS notification center replaces existing alerts rather than stacking duplicates.
+  - **Preference Enforcement**: Checks `user.notificationPreferences.desktopAlerts !== false` and `user.notificationPreferences.newEventCreated !== false` before firing.
+  - **Interactive Click Navigation**: Clicking the notification focuses the window, closes the notification, and smoothly navigates the user directly to the target module (`/visits` for `VISIT_ASSIGNED`).
+- **Test Trigger**: Added "Send Test Desktop Notification" button in `Settings > General` with `POST /api/notifications/test` backend endpoint, allowing administrators to verify foreground notification delivery directly on Microsoft Edge / Chrome.
+- **Visit Assignment Verification**: Verified that assigning a visit generates an unread `VISIT_ASSIGNED` notification delivered to the assigned marketing executive's polling stream and native desktop alert.
+
+### 7. Automated Verification & Quality Gates
+- **Automated Test Suite**: **77 / 77 tests passing** across 5 test suites (`organization-audit.test.ts`, `storage.test.ts`, `category-maps-report.test.ts`, `security.test.ts`, `geofence.test.ts`).
+- **TypeScript & Lint Gates**:
+  - `npm run build:server`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run lint`: 0 errors.
 - Phase 3.5 remains intentionally deferred.
+
 
 ### 7. Cloudinary Provider Activation & Mock URL Remediation
 - **Explicit Provider Selection**: Enforced strict provider selection logic. When valid Cloudinary credentials (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`) are present, `CloudinaryStorageProvider` is instantiated. Silent fallback to `MockStorageProvider` is forbidden; mock storage is only permitted when explicitly configured via `STORAGE_PROVIDER=mock` or in automated test environments (`NODE_ENV=test`).
@@ -611,6 +664,120 @@ Remaining limitations:
   - Frontend `FileUpload` safely detects legacy mock assets (`mock-storage.local`), displays a clear informational amber warning (`Local mock asset detected. Please click Replace below to upload to Cloudinary`), and intercepts broken view clicks with guidance instead of triggering browser `DNS_PROBE_FINISHED_NXDOMAIN`.
   - Topbar and profile cards guard against unresolvable `mock-storage.local` images, rendering clean user initials until the user replaces the avatar.
   - End-to-end verified live upload, signed URL delivery, and deletion against the running server.
+
+## Completed - Phase 3.4.1: CRM UI/UX Revamp & Organization Settings
+
+### 1. Design Direction & Mobile-First Usability
+- **Modern Enterprise SaaS Aesthetic**: Standardized on clean white and soft-neutral surfaces (`#f9fafb`, `#ffffff`), crisp 1px borders (`#e5e7eb`), clear typographic hierarchy, subtle shadows, and selective Excel red branding accents (`#dc2626`). Removed all unnecessary gradients and glassmorphism.
+- **Mobile-First Responsive Layouts**: Redesigned all workspace modules (Dashboard, Clients, Visits, Staff, Reports, Audit Logs, Settings). At viewports `<= 768px`, data tables automatically adapt into card-based layouts with stacked data fields, avoiding horizontal table clipping. All touch targets meet or exceed 44px.
+- **Sidebar & Viewport Architecture**: Pinned the root application layout to `100dvh` (`overflow: hidden`). Configured the sidebar as a flex-column with scrollable middle navigation (`overflow-y: auto`) and anchored bottom controls ("Collapse menu" and "Need help?") that stay firmly positioned at the bottom of the viewport without jumping when page content expands. Main workspace content scrolls independently (`overflow-y: auto`).
+
+### 2. Global Modal Architecture & Dialog Rendering Fix
+- **React Portal Implementation**: Rewrote `Modal.tsx` to mount directly into `document.body` via `ReactDOM.createPortal()`, with Escape key dismiss, backdrop click handling, internal scrollable modal body (`max-height: calc(85vh - 120px)`), and background scroll lock (`overflow: hidden` on body).
+- **Settings Modal Bug Remediation**: Fixed the bug in `ModulePage.tsx` where clicking "Edit profile" or "Change password" on `/settings` failed to display the dialog until navigating away. Replaced ternary conditionals with clean route handling and dedicated `SettingsPage.tsx`.
+
+### 3. Dedicated Tabbed Settings Experience
+- Created `SettingsPage.tsx` featuring an intuitive vertical tab layout:
+  1. **My Profile**: Identity card, avatar upload via Cloudinary, inline edit profile dialog, and change password modal.
+  2. **Organization** (Super Admin): Company name, contact email, phone, physical address, expanded & collapsed logo upload zones, and live workspace branding preview.
+  3. **Categories** (Super Admin): Business category master manager.
+  4. **GPS & Geofencing** (Super Admin): Configurable geofence radius and accuracy tolerances.
+  5. **File & Media Management** (Super Admin): Storage quota, asset counts, and storage status metrics.
+  6. **Security**: Password reset controls and role badge indicator.
+
+### 4. Dynamic Organization Branding & Data Model
+- **Mongoose `Organization` Model**: Singleton collection storing `name`, `email`, `phone`, `address`, `expandedLogo`, `expandedLogoAsset`, `collapsedLogo`, `collapsedLogoAsset`, and `updatedBy`.
+- **API Endpoints**:
+  - `GET /api/organization`: Returns current organization profile (authenticated).
+  - `PATCH /api/organization`: Updates organization profile, restricted to `SUPER_ADMIN`, with Zod input validation and full audit logging (`ORGANIZATION_UPDATED`).
+- **Dynamic Frontend Branding**: Implemented `OrganizationContext` and `BrandLogo.tsx`. The CRM sidebar dynamically renders custom expanded and collapsed logos (or fallbacks to dynamic organization name text), while the unauthenticated login portal securely preserves the vendor's Excel Technologies branding.
+- **Dynamic Report & Export Titles**: Updated `server/src/services/report.ts` so that PDF headers/footers, CSV exports, XLSX workbooks, and print views dynamically fetch the organization name from the database rather than using hardcoded company strings.
+
+### 5. Audit Log Management
+- Added `DELETE /api/audit-logs` endpoint strictly restricted to `SUPER_ADMIN`.
+- Integrated a prominent "Clear audit logs" button in the Audit Logs interface with a double-confirmation modal, clearing database records and invalidating query cache instantly.
+
+### 6. Neutralized Vendor Text
+- Removed all developer/infrastructure vendor names ("Cloudinary", "MongoDB", "Cloud Storage & Media Overview") from end-user viewports, replacing them with professional SaaS labels ("File & Media Management", "File Storage Active", "system asset records").
+
+### 7. Verification & Test Suite
+- Created `server/tests/organization-audit.test.ts` (7 automated tests):
+  1. `GET /api/organization` returns default profile to authenticated users.
+  2. `PATCH /api/organization` enforces Super Admin restriction (HTTP 403 for Marketing Head/Executive).
+  3. `PATCH /api/organization` validates and updates organization name and profile.
+  4. Generated PDF report dynamically incorporates custom organization name.
+  5. Logo upload updates organization branding references.
+  6. `DELETE /api/audit-logs` is restricted to Super Admin.
+  7. `DELETE /api/audit-logs` wipes audit records and logs deletion event.
+- **Test Suite Status**: **69 / 69 passing** across 5 test suites.
+- **Build & Quality Gates**: `npm run build:server` (0 errors), `npm run build` (0 errors), `npm run lint` (0 errors).
+
+### 8. Settings UI Visual Redesign & Oversized Logo Overflow Fix
+- **Two-Column Settings Architecture**: Redesigned `SettingsPage.tsx` to match the two-column enterprise layout from the second reference design.
+  - **Left Column (Navigation)**: Fixed-width (240px) secondary settings navigation grouped into `Account` (My Profile, General, Security) and `Workspace` (Organization, Categories, GPS & Geofencing, File & Media Management). Active items display an Excel red left accent border (`border-left: 3px solid #dc2626`), subtle neutral background (`#f3f4f6`), and bold text.
+  - **Right Column (Content)**: Clean header breadcrumb (`Settings > Section Name`), thin section dividers (`1px solid var(--border)`), inline form fields, switch toggles for notification preferences, and no oversized cards or excess whitespace.
+  - **Mobile Responsiveness**: On viewports `<= 768px`, secondary navigation smoothly collapses into a touch-friendly horizontally scrollable pill bar (`min-height: 44px`), with full-width inputs and vertical layout.
+- **Oversized Logo & Avatar Containment**:
+  - Identified root cause of topbar avatar overflow: flex image resolution expanded unbounded `<img>` elements to natural dimensions (800px+).
+  - Wrapped `Topbar` avatar in an explicit `.avatar` container and locked `.avatar`, `.profile-trigger img`, and `.avatar img` with `width: 32px !important; height: 32px !important; object-fit: cover !important; border-radius: 50%; overflow: hidden; flex-shrink: 0;`.
+  - Added `.profile-avatar-box` enforcing strict `96px × 96px` dimensions for profile photo displays.
+  - Enforced strict preview constraints for workspace logos: `.logo-preview-expanded-box` (max `220px × 64px`, `object-fit: contain`) and `.logo-preview-collapsed-box` (max `64px × 64px`, `object-fit: contain`).
+## Phase 3.4.2 — Notification Verification, Session Security QA & Private File Streaming
+
+### 1. Real Notification System Audit & Implementation
+- **Separated Delivery Layers**:
+  - **In-App Notifications**: Backed by MongoDB `Notification` collection with dynamic polling and real-time read/unread management. Added `DELETE /api/notifications` (clear all) and `DELETE /api/notifications/:id` (delete individual item).
+  - **Desktop Browser Notifications**: Integrated native HTML5 `Notification` API with explicit user action gating (`requestDesktopNotificationPermission()`) and navigation on click.
+  - **Desktop & Mobile Web Push Notifications**: Integrated W3C Push API with standard VAPID authentication (`web-push`). Created MongoDB `PushSubscription` model storing endpoints, `p256dh`, and `auth` credentials. Added background `sendPushToUser` dispatching with automated cleanup of expired endpoints (HTTP 404/410).
+  - **PWA Manifest & Service Worker**: Added `public/manifest.json` with `display: standalone`, high-res icons, and `theme_color: #dc2626`. Added `public/sw.js` with `push` and `notificationclick` listeners capable of waking background windows and navigating to target URLs. Configured Apple Web Push meta tags (`apple-mobile-web-app-capable`) for iOS Safari 16.4+ Home Screen support.
+- **Persistent Notification Preferences**:
+  - Added `User.notificationPreferences` schema in MongoDB storing booleans for `dailyProductivity`, `newEventCreated`, `mobilePush`, `desktopAlerts`, and `emailSummary`.
+  - Added `PATCH /api/users/me/preferences` endpoint. Connected switch toggles in `SettingsPage.tsx` General tab to real API mutations.
+
+### 2. Session & Token Security QA
+- **HTTP-Only Cookie Architecture**: JWT tokens stored exclusively in `httpOnly`, `sameSite: 'lax'`, `secure: production` cookies.
+- **Token Versioning & Revocation**: Token version checked on every authenticated request (`payload.tokenVersion === user.tokenVersion`).
+- **Global Session Revocation**: Implemented `POST /api/auth/logout-all` endpoint which atomically increments `tokenVersion` in MongoDB and clears the browser cookie, immediately invalidating all active sessions across all devices. Added "Sign out of all devices" button in the Settings > Security tab.
+
+### 3. Global Search UI Refinement
+- **Bounded Dropdown Layout**: Refined `.search-results-dropdown` with `max-width: min(420px, calc(100vw - 32px))` and `overflow-x: hidden`, preventing horizontal scrollbars on mobile and desktop.
+- **Single-Line Truncation & Native Tooltip**: Client search entries display prominent organization names with single-line addresses truncated using `text-overflow: ellipsis; white-space: nowrap; overflow: hidden;` and full text preserved in `title` attributes for native hover tooltips.
+
+### 4. Private CRM File Viewer & Modal Integration (`GET /api/files/:id/view`)
+- **Direct Streaming Proxy**: Implemented `streamFileAsset` in `server/src/services/storage/storage.service.ts` and mounted `GET /api/files/:id/view`.
+- **Complete Elimination of Raw Cloudinary Navigation**: Persisted and returned URLs strictly use the `/api/files/:id/view` route. Never returns raw Cloudinary delivery URLs or HTTP 301/302 redirects to client browsers.
+- **Strict Access Control**: Enforces authentication (401) and strict entity/team RBAC (403 for unauthorized or cross-team access).
+- **Security & Caching Headers**: Sets `Content-Disposition: inline; filename="..."` (or `attachment` when `?download=1`), MIME type, `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-cache, no-store, must-revalidate`.
+- **Serverless-Compliant Pipelining**: Cloudinary assets are streamed directly via `Readable.fromWeb(upstream.body).pipe(res)` without RAM buffering, complying with Vercel serverless execution constraints.
+- **In-App Modal File Viewer (`FileUpload.tsx`)**: Clicking "View" opens an internal CRM modal with loading and error states, native `<img>` or `<iframe>` rendering, and an explicit "Download" button (`?download=1`).
+
+### 5. VAPID Configuration & Web Push Verification
+- **Environment Diagnostics**: Backend validates `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (`mailto:...`), logging `[WebPush] VAPID configured: true/false` on startup without leaking secrets.
+- **Public Key Endpoint**: Mounted `GET /api/notifications/push/vapid-key` publicly without requiring pre-authentication cookies, resolving the `"VAPID public key is not configured on the server"` frontend alert.
+- **Push Client**: `src/lib/pushClient.ts` fetches `/api/notifications/push/vapid-key` with credentials included, registers service worker subscriptions, and saves them to MongoDB `PushSubscription`.
+- **Preference Guard**: Push notifications verify `recipient.notificationPreferences?.mobilePush !== false` before dispatching.
+
+### 6. Foreground Desktop Notification Pipeline & Duplicate Suppression
+- **Pipeline Implementation (`useForegroundNotifications.ts`)**:
+  - Connected React Query notifications polling in `Topbar.tsx` to the native HTML5 `Notification` API.
+  - **Polling Frequency & Window Focus**: Adjusted query interval to `10000ms` (10 seconds) with `refetchOnWindowFocus: true` for near-instant notification detection upon returning to the window.
+  - **Historical Snapshot Suppression**: Upon initial mount or user login, seeds all existing notifications into `seenIdsRef` and `sessionStorage`, ensuring old unread notifications never re-fire as spam upon page load or refresh.
+  - **Duplicate Suppression**: Tracks seen notification IDs across renders and sessions, and supplies deterministic OS-level tags (`crm-notif-${item._id}`) to `new Notification()` so the OS notification center replaces existing alerts rather than stacking duplicates.
+  - **Preference Enforcement**: Checks `user.notificationPreferences.desktopAlerts !== false` and `user.notificationPreferences.newEventCreated !== false` before firing.
+  - **Interactive Click Navigation**: Clicking the notification focuses the window, closes the notification, and smoothly navigates the user directly to the target module (`/visits` for `VISIT_ASSIGNED`).
+- **Test Trigger**: Added "Send Test Desktop Notification" button in `Settings > General` with `POST /api/notifications/test` backend endpoint, allowing administrators to verify foreground notification delivery directly on Microsoft Edge / Chrome.
+- **Visit Assignment Verification**: Verified that assigning a visit generates an unread `VISIT_ASSIGNED` notification delivered to the assigned marketing executive's polling stream and native desktop alert.
+
+### 7. Automated Verification & Quality Gates
+- **Automated Test Suite**: **77 / 77 tests passing** across 5 test suites (`organization-audit.test.ts`, `storage.test.ts`, `category-maps-report.test.ts`, `security.test.ts`, `geofence.test.ts`).
+- **TypeScript & Lint Gates**:
+  - `npm run build:server`: 0 errors.
+  - `npm run build`: 0 errors.
+  - `npm run lint`: 0 errors.
+- Phase 3.5 remains intentionally deferred.
+
+
+
 
 
 

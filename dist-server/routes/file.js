@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { rateLimit } from 'express-rate-limit';
 import { requireAuth, requireRoles } from '../middleware/auth.js';
-import { handleUpload, handleGetFile, handleListOwnerFiles, handleDeleteFile, handleStorageDashboard, } from '../controllers/file.js';
+import { handleUpload, handleGetFile, handleViewFile, handleListOwnerFiles, handleDeleteFile, handleStorageDashboard, } from '../controllers/file.js';
 export const fileRouter = Router();
 // Memory storage for stream upload to Cloudinary without local disk clutter
 const upload = multer({
@@ -24,5 +24,6 @@ fileRouter.use(requireAuth);
 fileRouter.post('/upload', uploadLimiter, upload.single('file'), handleUpload);
 fileRouter.get('/storage/dashboard', requireRoles('SUPER_ADMIN'), handleStorageDashboard);
 fileRouter.get('/owner/:ownerType/:ownerId', handleListOwnerFiles);
+fileRouter.get('/:id/view', handleViewFile);
 fileRouter.get('/:id', handleGetFile);
 fileRouter.delete('/:id', handleDeleteFile);

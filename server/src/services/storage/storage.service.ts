@@ -1,8 +1,11 @@
 import mongoose, { type Types } from 'mongoose'
+import { Readable } from 'node:stream'
+import type { Request, Response } from 'express'
 import { FileAsset, type FileAssetDocument, type FileOwnerType, type FileVisibility } from '../../models/FileAsset.js'
 import { User } from '../../models/User.js'
 import { Client } from '../../models/Client.js'
 import { Visit } from '../../models/Visit.js'
+import { Organization } from '../../models/Organization.js'
 import { AppError } from '../../utils/errors.js'
 import { recordAudit } from '../audit.js'
 import type { AuthUser } from '../../middleware/auth.js'
@@ -140,6 +143,13 @@ export async function verifyEntityAccess(
       break
     }
 
+    case 'ORGANIZATION_EXPANDED_LOGO':
+    case 'ORGANIZATION_COLLAPSED_LOGO':
+      if (requiredMode === 'WRITE') {
+        throw new AppError(403, 'Only Super Admin can manage organization branding logos')
+      }
+      return
+
     case 'GENERAL':
       if (requiredMode === 'WRITE') {
         throw new AppError(403, 'Only Super Admin can manage general workspace assets')
@@ -154,7 +164,7 @@ export async function uploadFileAsset(
   ownerType: FileOwnerType,
   ownerId: string,
   visibility: FileVisibility = 'PRIVATE'
-): Promise<{ asset: FileAssetDocument; signedUrl: string }> {
+): Promise<{ asset: FileAssetDocument; viewUrl: string; signedUrl: string }> {
   if (!mongoose.isValidObjectId(ownerId)) {
     throw new AppError(422, 'Invalid owner ID')
   }
@@ -204,11 +214,11 @@ export async function uploadFileAsset(
       isArchived: false,
     })
 
-    // 6. Update reference on owner entity
+    // 6. Update reference on owner entity using CRM streaming proxy URL (never direct Cloudinary URLs)
+    const crmViewUrl = `/api/files/${createdAsset._id}/view`
     if (ownerType === 'USER_AVATAR') {
-      const signedUrl = await activeProvider.getSignedUrl(createdAsset.cloudinaryPublicId, createdAsset.cloudinaryResourceType, 86400)
       await User.findByIdAndUpdate(ownerId, {
-        $set: { avatarAsset: createdAsset._id, avatar: signedUrl },
+        $set: { avatarAsset: createdAsset._id, avatar: crmViewUrl },
       })
     } else if (ownerType === 'CLIENT_VISITING_CARD') {
       await Client.findByIdAndUpdate(ownerId, {
@@ -226,6 +236,18 @@ export async function uploadFileAsset(
       await Visit.findByIdAndUpdate(ownerId, {
         $addToSet: { attachmentAssets: createdAsset._id },
       })
+    } else if (ownerType === 'ORGANIZATION_EXPANDED_LOGO') {
+      await Organization.findOneAndUpdate(
+        {},
+        { $set: { expandedLogoAsset: createdAsset._id, expandedLogo: crmViewUrl, updatedBy: actor.id } },
+        { upsert: true, new: true }
+      )
+    } else if (ownerType === 'ORGANIZATION_COLLAPSED_LOGO') {
+      await Organization.findOneAndUpdate(
+        {},
+        { $set: { collapsedLogoAsset: createdAsset._id, collapsedLogo: crmViewUrl, updatedBy: actor.id } },
+        { upsert: true, new: true }
+      )
     }
 
     // 7. Audit logging
@@ -237,8 +259,7 @@ export async function uploadFileAsset(
       mimeType: file!.mimetype,
     })
 
-    const signedUrl = await activeProvider.getSignedUrl(createdAsset.cloudinaryPublicId, createdAsset.cloudinaryResourceType, 3600)
-    return { asset: createdAsset, signedUrl }
+    return { asset: createdAsset, viewUrl: crmViewUrl, signedUrl: crmViewUrl }
   } catch (error) {
     // Failure handling: If MongoDB persistence failed after successful storage upload, clean up asset!
     if (!createdAsset) {
@@ -255,7 +276,7 @@ export async function uploadFileAsset(
 export async function getFileAsset(
   actor: AuthUser,
   fileId: string
-): Promise<{ asset: FileAssetDocument; signedUrl: string; isLegacyMock?: boolean }> {
+): Promise<{ asset: FileAssetDocument; viewUrl: string; signedUrl: string; isLegacyMock?: boolean }> {
   if (!mongoose.isValidObjectId(fileId)) {
     throw new AppError(422, 'Invalid file ID')
   }
@@ -269,15 +290,7 @@ export async function getFileAsset(
   await verifyEntityAccess(actor, asset.ownerType, String(asset.ownerId), 'READ')
 
   const isLegacyMock = Boolean(asset.secureStorageReference?.includes('mock-storage.local'))
-  let signedUrl = ''
-
-  if (isLegacyMock && activeProvider instanceof CloudinaryStorageProvider) {
-    // Legacy mock asset uploaded before Cloudinary was activated.
-    // Cloudinary cannot serve this asset. Return reference with legacy flag.
-    signedUrl = asset.secureStorageReference
-  } else {
-    signedUrl = await activeProvider.getSignedUrl(asset.cloudinaryPublicId, asset.cloudinaryResourceType, 3600)
-  }
+  const crmViewUrl = `/api/files/${asset._id}/view`
 
   await recordAudit(actor.id, 'FILE_ACCESSED', 'FileAsset', fileId, {
     ownerType: asset.ownerType,
@@ -285,14 +298,97 @@ export async function getFileAsset(
     isLegacyMock,
   })
 
-  return { asset, signedUrl, isLegacyMock }
+  return { asset, viewUrl: crmViewUrl, signedUrl: crmViewUrl, isLegacyMock }
+}
+
+export async function streamFileAsset(
+  actor: AuthUser,
+  fileId: string,
+  req: Request,
+  res: Response
+): Promise<void> {
+  if (!mongoose.isValidObjectId(fileId)) {
+    throw new AppError(422, 'Invalid file ID')
+  }
+
+  const asset = await FileAsset.findOne({ _id: fileId, isArchived: false })
+  if (!asset) {
+    throw new AppError(404, 'File not found')
+  }
+
+  // Security: Check RBAC and entity ownership
+  await verifyEntityAccess(actor, asset.ownerType, String(asset.ownerId), 'READ')
+
+  // Audit logging for access
+  await recordAudit(actor.id, 'FILE_ACCESSED', 'FileAsset', fileId, {
+    ownerType: asset.ownerType,
+    ownerId: String(asset.ownerId),
+    mode: 'STREAM_VIEW',
+  })
+
+  // Mandatory security headers: Content-Type, Content-Disposition, nosniff, cache-control
+  const safeName = asset.originalName.replace(/["\r\n\\]/g, '_')
+  const isDownload = req.query.download === '1' || req.query.download === 'true'
+  res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream')
+  res.setHeader('Content-Disposition', `${isDownload ? 'attachment' : 'inline'}; filename="${safeName}"`)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate')
+
+  const isMock = !(activeProvider instanceof CloudinaryStorageProvider) || asset.secureStorageReference?.includes('mock-storage.local')
+
+  if (isMock) {
+    // Mock environment or legacy mock file
+    if (asset.mimeType?.startsWith('image/')) {
+      res.setHeader('Content-Type', 'image/svg+xml')
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150" viewBox="0 0 300 150">
+        <rect width="100%" height="100%" fill="#f1f5f9"/>
+        <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="600" fill="#475569">${asset.originalName}</text>
+        <text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#94a3b8">Mock File Preview (${asset.mimeType})</text>
+      </svg>`
+      res.status(200).send(svg)
+      return
+    }
+    res.status(200).send(Buffer.from(`[Preview content for ${asset.originalName} (${asset.mimeType})]`))
+    return
+  }
+
+  // Cloudinary live streaming via short-lived signed URL
+  const signedUrl = await activeProvider.getSignedUrl(asset.cloudinaryPublicId, asset.cloudinaryResourceType, 300)
+
+  const fetchHeaders: Record<string, string> = {}
+  if (req.headers.range) {
+    fetchHeaders['Range'] = req.headers.range
+  }
+
+  const upstream = await fetch(signedUrl, { headers: fetchHeaders })
+  if (!upstream.ok && upstream.status !== 206) {
+    throw new AppError(upstream.status === 404 ? 404 : 502, `Failed to stream file from storage provider: ${upstream.statusText}`)
+  }
+
+  if (upstream.status === 206) {
+    res.status(206)
+    const contentRange = upstream.headers.get('content-range')
+    if (contentRange) res.setHeader('Content-Range', contentRange)
+    const contentLength = upstream.headers.get('content-length')
+    if (contentLength) res.setHeader('Content-Length', contentLength)
+  } else {
+    const contentLength = upstream.headers.get('content-length')
+    if (contentLength) res.setHeader('Content-Length', contentLength)
+  }
+
+  if (upstream.body) {
+    const nodeStream = Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0])
+    nodeStream.pipe(res)
+  } else {
+    res.end()
+  }
 }
 
 export async function listFilesForOwner(
   actor: AuthUser,
   ownerType: FileOwnerType,
   ownerId: string
-): Promise<Array<{ asset: FileAssetDocument; signedUrl: string; isLegacyMock?: boolean }>> {
+): Promise<Array<{ asset: FileAssetDocument; viewUrl: string; signedUrl: string; isLegacyMock?: boolean }>> {
   if (!mongoose.isValidObjectId(ownerId)) {
     throw new AppError(422, 'Invalid owner ID')
   }
@@ -301,18 +397,11 @@ export async function listFilesForOwner(
 
   const assets = await FileAsset.find({ ownerType, ownerId, isArchived: false }).sort({ createdAt: -1 })
 
-  const results = await Promise.all(
-    assets.map(async (asset) => {
-      const isLegacyMock = Boolean(asset.secureStorageReference?.includes('mock-storage.local'))
-      let signedUrl = ''
-      if (isLegacyMock && activeProvider instanceof CloudinaryStorageProvider) {
-        signedUrl = asset.secureStorageReference
-      } else {
-        signedUrl = await activeProvider.getSignedUrl(asset.cloudinaryPublicId, asset.cloudinaryResourceType, 3600)
-      }
-      return { asset, signedUrl, isLegacyMock }
-    })
-  )
+  const results = assets.map((asset) => {
+    const isLegacyMock = Boolean(asset.secureStorageReference?.includes('mock-storage.local'))
+    const crmViewUrl = `/api/files/${asset._id}/view`
+    return { asset, viewUrl: crmViewUrl, signedUrl: crmViewUrl, isLegacyMock }
+  })
 
   return results
 }
@@ -360,6 +449,10 @@ export async function deleteFileAsset(
     await Visit.findByIdAndUpdate(asset.ownerId, { $pull: { photoAssets: asset._id } })
   } else if (asset.ownerType === 'VISIT_ATTACHMENT') {
     await Visit.findByIdAndUpdate(asset.ownerId, { $pull: { attachmentAssets: asset._id } })
+  } else if (asset.ownerType === 'ORGANIZATION_EXPANDED_LOGO') {
+    await Organization.findOneAndUpdate({}, { $unset: { expandedLogoAsset: 1, expandedLogo: 1 } })
+  } else if (asset.ownerType === 'ORGANIZATION_COLLAPSED_LOGO') {
+    await Organization.findOneAndUpdate({}, { $unset: { collapsedLogoAsset: 1, collapsedLogo: 1 } })
   }
 
   await recordAudit(actor.id, 'FILE_DELETED', 'FileAsset', fileId, {

@@ -8,6 +8,7 @@ import { LoadingState } from '../components/ui/States'
 import type { Role } from '../types'
 import { ErrorState } from '../components/ui/States'
 import { ReportsPage } from '../features/reports/ReportsPage'
+import { SettingsPage } from '../features/settings/SettingsPage'
 
 export function App() {
   const { user, isLoading, logout } = useAuth()
@@ -28,7 +29,7 @@ export function App() {
     <Route path="/staff" element={module('staff', ['SUPER_ADMIN', 'MARKETING_HEAD'])} />
     <Route path="/reports" element={['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'].includes(user.role) ? <ReportsPage /> : <ErrorState description="Reports are restricted to authorised staff." />} />
     <Route path="/audit-logs" element={module('audit-logs', ['SUPER_ADMIN', 'MARKETING_HEAD'])} />
-    <Route path="/settings" element={module('settings', ['SUPER_ADMIN', 'MARKETING_HEAD', 'MARKETING_EXECUTIVE'])} />
+    <Route path="/settings" element={<SettingsPage />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></AppShell>
 }

@@ -1,4 +1,5 @@
-import { listNotifications, markAllNotificationsRead, markNotificationRead } from '../services/notification.js';
+import { createNotification, listNotifications, markAllNotificationsRead, markNotificationRead, clearAllNotifications, deleteNotification, } from '../services/notification.js';
+import { getVapidPublicKey, saveSubscription, deleteSubscription, } from '../services/push.js';
 import { success } from '../utils/api.js';
 export async function getNotifications(req, res) {
     return success(res, await listNotifications(req.authUser.id, Number(req.query.page) || 1, Number(req.query.limit) || 20));
@@ -9,4 +10,34 @@ export async function readNotification(req, res) {
 }
 export async function readAllNotifications(req, res) {
     return success(res, await markAllNotificationsRead(req.authUser.id));
+}
+export async function clearNotifications(req, res) {
+    return success(res, await clearAllNotifications(req.authUser.id));
+}
+export async function removeNotification(req, res) {
+    return success(res, await deleteNotification(String(req.params.id), req.authUser.id));
+}
+export async function createTestNotification(req, res) {
+    const uniqueRef = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    const notif = await createNotification({
+        recipient: req.authUser.id,
+        title: 'Excel Technologies & Services',
+        message: `CRM desktop banner diagnostic check (${uniqueRef}).`,
+        type: 'TEST',
+    });
+    return success(res, notif, 201);
+}
+export async function getVapidKey(_req, res) {
+    const key = getVapidPublicKey();
+    return success(res, { vapidPublicKey: key, publicKey: key });
+}
+export async function subscribePush(req, res) {
+    const userAgent = req.header('user-agent');
+    const payload = req.body.subscription || req.body;
+    const subscription = await saveSubscription(req.authUser.id, payload, userAgent);
+    return success(res, { subscribed: true, id: String(subscription._id) }, 201);
+}
+export async function unsubscribePush(req, res) {
+    const result = await deleteSubscription(req.body.endpoint, req.authUser.id);
+    return success(res, result);
 }

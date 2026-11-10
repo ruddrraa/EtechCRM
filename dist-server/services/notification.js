@@ -1,6 +1,15 @@
 import { Notification } from '../models/Notification.js';
-export function createNotification(input) {
-    return Notification.create(input);
+import { sendPushToUser } from './push.js';
+export async function createNotification(input) {
+    const notif = await Notification.create(input);
+    void sendPushToUser(input.recipient, {
+        title: input.title,
+        body: input.message,
+        url: input.entityType === 'Visit' ? '/visits' : '/',
+        tag: `crm-notif-${String(notif._id)}`,
+        notificationId: String(notif._id),
+    }).catch(() => { });
+    return notif;
 }
 export async function listNotifications(recipient, page = 1, limit = 20) {
     const safePage = Math.max(1, page);
@@ -19,4 +28,12 @@ export async function markNotificationRead(id, recipient) {
 export async function markAllNotificationsRead(recipient) {
     const result = await Notification.updateMany({ recipient, readAt: { $exists: false } }, { $set: { readAt: new Date() } });
     return { updated: result.modifiedCount };
+}
+export async function clearAllNotifications(recipient) {
+    const result = await Notification.deleteMany({ recipient });
+    return { deleted: result.deletedCount };
+}
+export async function deleteNotification(id, recipient) {
+    const result = await Notification.deleteOne({ _id: id, recipient });
+    return { deleted: result.deletedCount > 0 };
 }

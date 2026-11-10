@@ -114,7 +114,7 @@ describe('Phase 3.4 — Centralized Cloud File Storage & Media Management', () =
     expect(res.body.success).toBe(true)
     expect(res.body.data.asset.originalName).toBe('admin_avatar.jpg')
     expect(res.body.data.asset.resourceType).toBe('image')
-    expect(res.body.data.signedUrl).toContain('mock-storage.local')
+    expect(res.body.data.signedUrl).toBe(`/api/files/${res.body.data.asset._id}/view`)
 
     // Verify MongoDB stores metadata only (NO binary content)
     const savedAsset = await FileAsset.findById(res.body.data.asset._id).lean()
@@ -127,7 +127,7 @@ describe('Phase 3.4 — Centralized Cloud File Storage & Media Management', () =
     // Verify User model was updated with reference
     const updatedAdmin = await User.findById(admin._id).lean()
     expect(String(updatedAdmin?.avatarAsset)).toBe(String(savedAsset?._id))
-    expect(updatedAdmin?.avatar).toBeDefined()
+    expect(updatedAdmin?.avatar).toBe(`/api/files/${savedAsset?._id}/view`)
 
     // Verify audit log
     const audit = await AuditEvent.findOne({ action: 'FILE_UPLOADED', entityId: savedAsset?._id }).lean()

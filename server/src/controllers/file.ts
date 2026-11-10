@@ -4,6 +4,7 @@ import { AppError } from '../utils/errors.js'
 import {
   uploadFileAsset,
   getFileAsset,
+  streamFileAsset,
   listFilesForOwner,
   deleteFileAsset,
   getStorageDashboardStats,
@@ -49,6 +50,13 @@ export async function handleGetFile(req: Request, res: Response) {
 
   const result = await getFileAsset(actor, fileId)
   return success(res, result)
+}
+
+export async function handleViewFile(req: Request, res: Response) {
+  const actor = req.authUser!
+  const fileId = String(req.params.id)
+
+  await streamFileAsset(actor, fileId, req, res)
 }
 
 export async function handleListOwnerFiles(req: Request, res: Response) {

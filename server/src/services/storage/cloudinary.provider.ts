@@ -86,7 +86,7 @@ export class CloudinaryStorageProvider implements IStorageProvider {
     }
   }
 
-  async getSignedUrl(publicId: string, resourceType: string = 'image', _expiresInSeconds: number = 3600): Promise<string> {
+  async getSignedUrl(publicId: string, resourceType: string = 'image', expiresInSeconds: number = 3600): Promise<string> {
     this.ensureConfigured()
 
     const url = cloudinary.url(publicId, {
@@ -94,6 +94,7 @@ export class CloudinaryStorageProvider implements IStorageProvider {
       type: 'authenticated',
       sign_url: true,
       secure: true,
+      expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
     })
 
     return url

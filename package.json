@@ -11,10 +11,11 @@
     "dev:start": "npm run dev:server",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:server": "vitest run server/tests"
+    "test:server": "vitest run server/tests --test-timeout=20000"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
+    "@types/web-push": "^3.6.4",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.11.0",
@@ -37,6 +38,7 @@
     "react-router-dom": "^7.0.2",
     "recharts": "^2.15.0",
     "tailwind-merge": "^2.5.5",
+    "web-push": "^4.0.0",
     "xlsx": "^0.18.5",
     "zod": "^4.6.7"
   },

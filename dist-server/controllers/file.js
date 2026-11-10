@@ -1,6 +1,6 @@
 import { success } from '../utils/api.js';
 import { AppError } from '../utils/errors.js';
-import { uploadFileAsset, getFileAsset, listFilesForOwner, deleteFileAsset, getStorageDashboardStats, } from '../services/storage/storage.service.js';
+import { uploadFileAsset, getFileAsset, streamFileAsset, listFilesForOwner, deleteFileAsset, getStorageDashboardStats, } from '../services/storage/storage.service.js';
 import { fileOwnerTypes } from '../models/FileAsset.js';
 export async function handleUpload(req, res) {
     const actor = req.authUser;
@@ -24,6 +24,11 @@ export async function handleGetFile(req, res) {
     const fileId = String(req.params.id);
     const result = await getFileAsset(actor, fileId);
     return success(res, result);
+}
+export async function handleViewFile(req, res) {
+    const actor = req.authUser;
+    const fileId = String(req.params.id);
+    await streamFileAsset(actor, fileId, req, res);
 }
 export async function handleListOwnerFiles(req, res) {
     const actor = req.authUser;

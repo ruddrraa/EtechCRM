@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import * as XLSX from 'xlsx';
 import { User } from '../models/User.js';
 import { Visit } from '../models/Visit.js';
+import { getOrganizationConfig } from './organization.js';
 import { isExecutiveRole } from '../middleware/auth.js';
 import { AppError } from '../utils/errors.js';
 const activeExecutiveRoles = { $in: ['MARKETING_EXECUTIVE', 'USER'] };
@@ -154,10 +155,14 @@ function filterText(query) {
     return Object.entries(query).filter(([key, value]) => value !== undefined && !['page', 'limit', 'sort', 'order'].includes(key)).map(([key, value]) => `${key}: ${value}`).join(', ') || 'All permitted records';
 }
 export async function exportReport(user, query, view, format) {
-    const pipeline = await visitPipeline(user, query);
+    const [pipeline, org] = await Promise.all([
+        visitPipeline(user, query),
+        getOrganizationConfig(),
+    ]);
+    const orgName = org?.name?.trim() || 'Excel Technologies and Services';
     const visits = await Visit.aggregate([...pipeline, sortStage(query)]);
     const rows = exportRows(visits, view).map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, safeCell(value)])));
-    const title = `Excel Technologies and Services - ${view === 'client' ? 'Client Wise' : 'Staff Wise'} Visit Report`;
+    const title = `${orgName} - ${view === 'client' ? 'Client Wise' : 'Staff Wise'} Visit Report`;
     const headers = Object.keys(rows[0] ?? (view === 'client' ? { 'Client Name': '' } : { 'Executive Name': '' }));
     if (format === 'csv') {
         const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
@@ -170,7 +175,7 @@ export async function exportReport(user, query, view, format) {
         sheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}` };
         sheet['!freeze'] = { xSplit: 0, ySplit: 1 };
         XLSX.utils.book_append_sheet(workbook, sheet, 'Visit Details');
-        const summary = XLSX.utils.aoa_to_sheet([[title], ['Generated', new Date().toLocaleString()], ['Filters', filterText(query)]]);
+        const summary = XLSX.utils.aoa_to_sheet([[title], ['Organization', orgName], ['Generated', new Date().toLocaleString()], ['Filters', filterText(query)]]);
         summary['!cols'] = [{ wch: 18 }, { wch: 80 }];
         XLSX.utils.book_append_sheet(workbook, summary, 'Summary');
         return { contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: `${view}-visit-report.xlsx`, body: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) };
@@ -182,7 +187,7 @@ export async function exportReport(user, query, view, format) {
     const widths = headers.map(() => (document.page.width - 56) / headers.length);
     const drawHeader = () => {
         document.fontSize(16).fillColor('#171717').text(title, 28, 24);
-        document.fontSize(8).fillColor('#555').text(`Generated: ${new Date().toLocaleString()} · Filters: ${filterText(query)}`, 28, 45);
+        document.fontSize(8).fillColor('#555').text(`Organization: ${orgName} · Generated: ${new Date().toLocaleString()} · Filters: ${filterText(query)}`, 28, 45);
         let x = 28;
         document.fontSize(7).fillColor('#fff');
         headers.forEach((header, index) => { document.rect(x, 68, widths[index], 24).fill('#202020'); document.fillColor('#fff').text(header, x + 3, 76, { width: widths[index] - 6, height: 16 }); x += widths[index]; });
@@ -203,7 +208,7 @@ export async function exportReport(user, query, view, format) {
     const pages = document.bufferedPageRange();
     for (let page = pages.start; page < pages.start + pages.count; page += 1) {
         document.switchToPage(page);
-        document.fontSize(8).fillColor('#555').text(`Excel Technologies and Services · Page ${page - pages.start + 1} of ${pages.count}`, 28, document.page.height - 25, { align: 'center', width: document.page.width - 56 });
+        document.fontSize(8).fillColor('#555').text(`${orgName} · Page ${page - pages.start + 1} of ${pages.count}`, 28, document.page.height - 25, { align: 'center', width: document.page.width - 56 });
     }
     document.end();
     return { contentType: 'application/pdf', filename: `${view}-visit-report.pdf`, body: await done };

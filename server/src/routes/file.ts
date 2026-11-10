@@ -5,6 +5,7 @@ import { requireAuth, requireRoles } from '../middleware/auth.js'
 import {
   handleUpload,
   handleGetFile,
+  handleViewFile,
   handleListOwnerFiles,
   handleDeleteFile,
   handleStorageDashboard,
@@ -35,6 +36,7 @@ fileRouter.use(requireAuth)
 fileRouter.post('/upload', uploadLimiter, upload.single('file'), handleUpload)
 fileRouter.get('/storage/dashboard', requireRoles('SUPER_ADMIN'), handleStorageDashboard)
 fileRouter.get('/owner/:ownerType/:ownerId', handleListOwnerFiles)
+fileRouter.get('/:id/view', handleViewFile)
 fileRouter.get('/:id', handleGetFile)
 fileRouter.delete('/:id', handleDeleteFile)
 

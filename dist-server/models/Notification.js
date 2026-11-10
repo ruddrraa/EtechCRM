@@ -3,7 +3,7 @@ const notificationSchema = new Schema({
     recipient: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     title: { type: String, required: true, trim: true, maxlength: 160 },
     message: { type: String, required: true, trim: true, maxlength: 500 },
-    type: { type: String, required: true, enum: ['VISIT_ASSIGNED', 'VISIT_CANCELLED', 'VISIT_UPDATED'] },
+    type: { type: String, required: true, enum: ['VISIT_ASSIGNED', 'VISIT_CANCELLED', 'VISIT_UPDATED', 'TEST'] },
     entityType: { type: String, enum: ['Visit', 'Client'] },
     entityId: { type: Schema.Types.ObjectId },
     readAt: { type: Date },

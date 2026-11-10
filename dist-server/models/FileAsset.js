@@ -5,6 +5,8 @@ export const fileOwnerTypes = [
     'CLIENT_DOCUMENT',
     'VISIT_PHOTO',
     'VISIT_ATTACHMENT',
+    'ORGANIZATION_EXPANDED_LOGO',
+    'ORGANIZATION_COLLAPSED_LOGO',
     'GENERAL',
 ];
 export const fileVisibilities = ['PUBLIC', 'AUTHENTICATED', 'PRIVATE'];

@@ -14,6 +14,9 @@ const schema = z.object({
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
   STORAGE_PROVIDER: z.enum(['cloudinary', 'mock']).optional(),
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:admin@exceltechnologies.in'),
 })
 
 export const env = schema.parse({
@@ -29,4 +32,7 @@ export const env = schema.parse({
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
   STORAGE_PROVIDER: process.env.STORAGE_PROVIDER as 'cloudinary' | 'mock' | undefined,
+  VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT || 'mailto:admin@exceltechnologies.in',
 })

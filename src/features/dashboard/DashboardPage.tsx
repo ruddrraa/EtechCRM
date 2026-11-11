@@ -8,6 +8,7 @@ import { PageHeader } from '../../components/ui/PageHeader'
 import { ActivityChart } from '../../components/charts/ActivityChart'
 import { LoadingState, ErrorState } from '../../components/ui/States'
 import { apiFetch } from '../../lib/api'
+import { formatIstShortDate, formatIstTime } from '../../lib/timezone'
 import type { Role } from '../../types'
 import { roleCopy } from './mockData'
 
@@ -35,7 +36,7 @@ const datePresets = [
 ] as const
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return formatIstShortDate(value)
 }
 
 export function DashboardPage({ role, userName }: { role: Role; userName: string }) {
@@ -86,7 +87,7 @@ export function DashboardPage({ role, userName }: { role: Role; userName: string
     </div>
     <div className="dashboard-grid">
       <Card><div className="card-heading"><div><p className="eyebrow">Coverage</p><h2>Top visited clients</h2></div></div><div className="activity-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={dashboard.data.topClients} layout="vertical" margin={{ left: 8, right: 12 }}><CartesianGrid stroke="#e6e6e3" horizontal={false} /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={100} tick={{ fill: '#555', fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><Bar dataKey="visits" fill="#202020" radius={[0, 3, 3, 0]} /></BarChart></ResponsiveContainer></div></Card>
-      <Card><div className="card-heading"><div><p className="eyebrow">Schedule</p><h2>Upcoming visits</h2></div></div><div className="visit-list">{dashboard.data.upcomingVisits.length === 0 ? <p className="empty-copy">No upcoming visits in this range.</p> : dashboard.data.upcomingVisits.map((visit) => <div className="visit-row" key={visit._id}><div className="visit-date"><CalendarDays size={16} /><span><b>{formatDate(visit.plannedDate)}</b><em>{new Date(visit.plannedDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</em></span></div><div><strong>{visit.client?.organisationName ?? 'Unknown client'}</strong><small>{visit.assignedTo?.name ?? 'Assigned executive'}</small></div><Badge tone={visit.status === 'CHECKED_IN' ? 'warning' : 'success'}>{visit.status}</Badge></div>)}</div></Card>
+      <Card><div className="card-heading"><div><p className="eyebrow">Schedule</p><h2>Upcoming visits</h2></div></div><div className="visit-list">{dashboard.data.upcomingVisits.length === 0 ? <p className="empty-copy">No upcoming visits in this range.</p> : dashboard.data.upcomingVisits.map((visit) => <div className="visit-row" key={visit._id}><div className="visit-date"><CalendarDays size={16} /><span><b>{formatDate(visit.plannedDate)}</b><em>{formatIstTime(visit.plannedDate)}</em></span></div><div><strong>{visit.client?.organisationName ?? 'Unknown client'}</strong><small>{visit.assignedTo?.name ?? 'Assigned executive'}</small></div><Badge tone={visit.status === 'CHECKED_IN' ? 'warning' : 'success'}>{visit.status}</Badge></div>)}</div></Card>
     </div>
     <Card><div className="card-heading"><div><p className="eyebrow">History</p><h2>Recent completed visits</h2></div></div><div className="activity-list">{dashboard.data.recentCompleted.length === 0 ? <p className="empty-copy">No completed visits in this range.</p> : dashboard.data.recentCompleted.map((visit) => <div className="activity-row" key={visit._id}><span className="activity-dot dot-1" /><span><strong>{visit.client?.organisationName ?? 'Unknown client'}</strong><small>{formatDate(visit.plannedDate)}</small></span><Badge tone="success">COMPLETED</Badge></div>)}</div></Card>
   </div>

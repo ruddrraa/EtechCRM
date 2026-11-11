@@ -7,6 +7,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Modal } from '../../components/ui/Modal'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/States'
 import { apiFetch } from '../../lib/api'
+import { formatIstDate } from '../../lib/timezone'
 
 export type CategoryItem = {
   _id: string
@@ -191,7 +192,7 @@ export function CategorySettings() {
                     </Badge>
                   </td>
                   <td>{item.createdBy?.name ?? '—'}</td>
-                  <td>{new Date(item.updatedAt || item.createdAt).toLocaleDateString()}</td>
+                  <td>{formatIstDate(item.updatedAt || item.createdAt)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <Button

@@ -228,7 +228,7 @@ describe('security boundaries', () => {
     expect(response.body.data.status).toBe('ASSIGNED')
     expect(response.body.data.client).toBe(String(client._id))
     expect(response.body.data.assignedTo).toBe(String(executive._id))
-    expect(new Date(response.body.data.plannedDate).toISOString()).toBe(new Date(plannedDate).toISOString())
+    expect(new Date(response.body.data.plannedDate).toISOString()).toBe('2026-11-07T14:44:00.000Z')
     const persisted = await Visit.findById(response.body.data._id).lean()
     expect(persisted?.instructions).toBe('Bring the requested documents')
   })

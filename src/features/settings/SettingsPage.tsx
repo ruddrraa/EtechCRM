@@ -12,6 +12,7 @@ import { GeofenceSettings } from './GeofenceSettings'
 import { StorageDashboard } from './StorageDashboard'
 import { useAuth } from '../auth/AuthContext'
 import { apiFetch } from '../../lib/api'
+import { formatIstTime } from '../../lib/timezone'
 import type { NotificationItem, NotificationPreferences } from '../../types'
 import {
   requestDesktopNotificationPermission,
@@ -667,7 +668,7 @@ export function SettingsPage() {
                           <strong style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--ink)' }}>Event Log:</strong>
                           {bannerReport.events.map((ev, idx) => (
                             <div key={`${ev.type}-${idx}`} style={{ fontFamily: 'monospace', fontSize: '0.73rem' }}>
-                              [{new Date(ev.timestamp).toLocaleTimeString()}] {ev.type}: {ev.detail || ''}
+                              [{formatIstTime(ev.timestamp)}] {ev.type}: {ev.detail || ''}
                             </div>
                           ))}
                         </div>

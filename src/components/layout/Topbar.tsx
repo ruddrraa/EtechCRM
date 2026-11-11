@@ -13,6 +13,7 @@ import {
   Trash2,
   FileText,
 } from 'lucide-react'
+import { formatIstDateTime } from '../../lib/timezone'
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -411,7 +412,7 @@ export function Topbar({ onMenu, user, onLogout }: { onMenu: () => void; user: A
                       >
                         <strong>{item.title}</strong>
                         <span>{item.message}</span>
-                        <small>{new Date(item.createdAt).toLocaleString()}</small>
+                        <small>{formatIstDateTime(item.createdAt)}</small>
                       </button>
 
                       <button

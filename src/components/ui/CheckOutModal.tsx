@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Modal } from './Modal'
 import { Button } from './Button'
 import { MapPin, Navigation, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { toIstUtcIso } from '../../lib/timezone'
 
 export interface CheckOutVisit {
   _id: string
@@ -102,7 +103,8 @@ export function CheckOutModal({
     e.preventDefault()
     const form = new FormData(e.currentTarget)
     const remarks = String(form.get('remarks') ?? '').trim()
-    const followUpDate = form.get('followUpDate') ? String(form.get('followUpDate')) : undefined
+    const rawFollowUpDate = form.get('followUpDate') ? String(form.get('followUpDate')).trim() : ''
+    const followUpDate = rawFollowUpDate ? toIstUtcIso(rawFollowUpDate) : undefined
 
     onComplete({
       remarks,

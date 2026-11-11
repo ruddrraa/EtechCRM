@@ -4,6 +4,7 @@ import { CronJobRun } from '../models/CronJobRun.js'
 import { createIdempotentNotification } from './notification.js'
 import { env } from '../config/env.js'
 import { AppError } from '../utils/errors.js'
+import { zonedMidnightToUtc } from '../utils/timezone.js'
 
 export const ACTIVE_FOLLOWUP_STATUSES = ['PLANNED', 'ASSIGNED', 'ARRIVED', 'CHECKED_IN'] as const
 export const MAX_CRON_VISITS_PER_RUN = 200
@@ -53,45 +54,6 @@ function validateTimeZone(timeZone: string): string {
   } catch {
     throw new AppError(422, `Invalid timezone: "${timeZone}"`)
   }
-}
-
-function getOffsetMsAt(utcMs: number, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-  const parts = formatter.formatToParts(new Date(utcMs))
-  const lookup: Record<string, number> = {}
-  for (const part of parts) {
-    if (part.type !== 'literal') {
-      lookup[part.type] = Number(part.value)
-    }
-  }
-  const tzAsUtc = Date.UTC(
-    lookup.year,
-    lookup.month - 1,
-    lookup.day,
-    lookup.hour === 24 ? 0 : lookup.hour,
-    lookup.minute,
-    lookup.second
-  )
-  const truncatedUtc = Math.floor(utcMs / 1000) * 1000
-  return tzAsUtc - truncatedUtc
-}
-
-function zonedMidnightToUtc(dateKey: string, timeZone: string): Date {
-  const [year, month, day] = dateKey.split('-').map(Number)
-  const utcMidnight = Date.UTC(year, month - 1, day, 0, 0, 0, 0)
-  const offset1 = getOffsetMsAt(utcMidnight, timeZone)
-  const candidate = utcMidnight - offset1
-  const offset2 = getOffsetMsAt(candidate, timeZone)
-  return new Date(utcMidnight - offset2)
 }
 
 export function resolveBusinessDayWindow(

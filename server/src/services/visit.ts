@@ -9,6 +9,7 @@ import { createNotification } from './notification.js'
 import { isExecutiveRole, isHeadRole } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
 import { calculateHaversineDistance, getGeofenceConfig } from './setting.js'
+import { formatIstDateTime } from '../utils/timezone.js'
 
 async function ownFilter(user: AuthUser) {
   if (isExecutiveRole(user.role)) return { assignedTo: user.id }
@@ -53,7 +54,7 @@ export async function createAssignedVisit(input: { clientId: string; assignedTo:
   if (actor.role === 'MARKETING_HEAD' && String(executive.reportingTo ?? '') !== actor.id) throw new AppError(403, 'You can only assign visits to your own team')
   const visit = await Visit.create({ client: input.clientId, assignedTo: input.assignedTo, assignedBy: actor.id, marketingHeadAtAssignment: actor.role === 'MARKETING_HEAD' ? actor.id : undefined, source: 'ADMIN_ASSIGNED', plannedDate: input.plannedDate, instructions: input.instructions, status: 'ASSIGNED' })
   await recordAudit(actor.id, 'VISIT_ASSIGNED', 'Visit', String(visit._id), { assignedTo: input.assignedTo })
-  await createNotification({ recipient: input.assignedTo, title: 'New visit assigned', message: `You have a visit scheduled for ${visit.plannedDate.toLocaleString()}.`, type: 'VISIT_ASSIGNED', entityType: 'Visit', entityId: String(visit._id) })
+  await createNotification({ recipient: input.assignedTo, title: 'New visit assigned', message: `You have a visit scheduled for ${formatIstDateTime(visit.plannedDate)}.`, type: 'VISIT_ASSIGNED', entityType: 'Visit', entityId: String(visit._id) })
   if (actor.role === 'SUPER_ADMIN' && executive.reportingTo) await createNotification({ recipient: String(executive.reportingTo), title: 'Team visit assigned', message: `${executive.name} has received a new visit assignment.`, type: 'VISIT_ASSIGNED', entityType: 'Visit', entityId: String(visit._id) })
   return visit
 }

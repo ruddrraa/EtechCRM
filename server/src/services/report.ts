@@ -8,6 +8,7 @@ import type { AuthUser } from '../middleware/auth.js'
 import { isExecutiveRole } from '../middleware/auth.js'
 import { AppError } from '../utils/errors.js'
 import type { ReportQuery } from '../validators/report.js'
+import { formatIstDate, formatIstDateTime, resolveBusinessDateRange } from '../utils/timezone.js'
 
 const activeExecutiveRoles = { $in: ['MARKETING_EXECUTIVE', 'USER'] }
 type Location = { latitude?: number; longitude?: number; recordedAt?: Date | string; locationStatus?: string }
@@ -27,23 +28,7 @@ type VisitRow = {
 }
 
 function range(query: ReportQuery) {
-  const day = (value: string, end = false) => {
-    const result = new Date(value)
-    if (end) result.setHours(23, 59, 59, 999)
-    else result.setHours(0, 0, 0, 0)
-    return result
-  }
-  if (query.preset === 'custom') return { from: day(query.startDate!), to: day(query.endDate!, true) }
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  if (query.preset === 'today') return { from: today, to: day(today.toISOString(), true) }
-  if (query.preset === 'this_week') {
-    const from = new Date(today)
-    from.setDate(from.getDate() - ((from.getDay() + 6) % 7))
-    return { from, to: new Date(from.getTime() + 7 * 86400000 - 1) }
-  }
-  if (query.preset === 'last_month') return { from: new Date(today.getFullYear(), today.getMonth() - 1, 1), to: new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999) }
-  return { from: new Date(today.getFullYear(), today.getMonth(), 1), to: new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999) }
+  return resolveBusinessDateRange(query.preset ?? 'this_month', query.startDate, query.endDate)
 }
 
 async function scope(user: AuthUser) {
@@ -142,7 +127,7 @@ function safeCell(value: unknown) {
 }
 
 function dateText(value?: Date | string) {
-  return value ? new Date(value).toLocaleString() : '—'
+  return formatIstDateTime(value)
 }
 
 function locationText(location?: Location) {
@@ -164,7 +149,7 @@ function exportRows(visits: VisitRow[], view: 'client' | 'staff') {
       Location: visit.client.address,
       'Executive Name': visit.assignedTo.name,
       Remarks: visit.remarks ?? '—',
-      'Follow-up Date': dateText(visit.followUpDate),
+      'Follow-up Date': formatIstDate(visit.followUpDate),
       'Marketing Head': visit.marketingHead?.name ?? '—',
     }
     : {
@@ -180,7 +165,7 @@ function exportRows(visits: VisitRow[], view: 'client' | 'staff') {
       'Check-out Coordinates': locationText(visit.checkOut),
       Location: visit.client.address,
       Remarks: visit.remarks ?? '—',
-      'Follow-up Date': dateText(visit.followUpDate),
+      'Follow-up Date': formatIstDate(visit.followUpDate),
     })
 }
 
@@ -212,7 +197,7 @@ export async function exportReport(user: AuthUser, query: ReportQuery, view: 'cl
     sheet['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}` }
     sheet['!freeze'] = { xSplit: 0, ySplit: 1 }
     XLSX.utils.book_append_sheet(workbook, sheet, 'Visit Details')
-    const summary = XLSX.utils.aoa_to_sheet([[title], ['Organization', orgName], ['Generated', new Date().toLocaleString()], ['Filters', filterText(query)]])
+    const summary = XLSX.utils.aoa_to_sheet([[title], ['Organization', orgName], ['Generated', formatIstDateTime(new Date())], ['Filters', filterText(query)]])
     summary['!cols'] = [{ wch: 18 }, { wch: 80 }]
     XLSX.utils.book_append_sheet(workbook, summary, 'Summary')
     return { contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: `${view}-visit-report.xlsx`, body: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) }
@@ -224,7 +209,7 @@ export async function exportReport(user: AuthUser, query: ReportQuery, view: 'cl
   const widths = headers.map(() => (document.page.width - 56) / headers.length)
   const drawHeader = () => {
     document.fontSize(16).fillColor('#171717').text(title, 28, 24)
-    document.fontSize(8).fillColor('#555').text(`Organization: ${orgName} · Generated: ${new Date().toLocaleString()} · Filters: ${filterText(query)}`, 28, 45)
+    document.fontSize(8).fillColor('#555').text(`Organization: ${orgName} · Generated: ${formatIstDateTime(new Date())} · Filters: ${filterText(query)}`, 28, 45)
     let x = 28
     document.fontSize(7).fillColor('#fff')
     headers.forEach((header, index) => { document.rect(x, 68, widths[index], 24).fill('#202020'); document.fillColor('#fff').text(header, x + 3, 76, { width: widths[index] - 6, height: 16 }); x += widths[index] })

@@ -4,6 +4,7 @@ import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { apiFetch } from '../../lib/api'
+import { formatIstDate } from '../../lib/timezone'
 import { HardDrive, FileCheck, Layers, Clock, Cloud, ShieldCheck, Trash2 } from 'lucide-react'
 
 interface OrphanReport {
@@ -196,7 +197,7 @@ export function StorageDashboard() {
                         <td style={{ padding: '0.5rem 0.75rem' }}>{formatCategory(file.ownerType)}</td>
                         <td style={{ padding: '0.5rem 0.75rem' }}>{formatBytes(file.sizeBytes)}</td>
                         <td style={{ padding: '0.5rem 0.75rem' }}>{file.uploadedBy}</td>
-                        <td style={{ padding: '0.5rem 0.75rem', color: 'var(--muted)' }}>{new Date(file.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: '0.5rem 0.75rem', color: 'var(--muted)' }}>{formatIstDate(file.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>

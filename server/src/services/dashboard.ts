@@ -5,45 +5,23 @@ import { Types } from 'mongoose'
 import type { AuthUser } from '../middleware/auth.js'
 import { isExecutiveRole } from '../middleware/auth.js'
 import { AppError } from '../utils/errors.js'
+import { BUSINESS_TIMEZONE, parseBusinessDateTime, resolveBusinessDateRange } from '../utils/timezone.js'
 
 type DashboardQuery = { preset?: string; startDate?: string; endDate?: string }
 
-function startOfDay(value: Date) {
-  const date = new Date(value)
-  date.setHours(0, 0, 0, 0)
-  return date
-}
-
-function endOfDay(value: Date) {
-  const date = new Date(value)
-  date.setHours(23, 59, 59, 999)
-  return date
-}
-
 function rangeFor(query: DashboardQuery) {
-  const now = new Date()
   const preset = query.preset ?? 'this_month'
   if (preset === 'custom') {
     if (!query.startDate || !query.endDate) throw new AppError(422, 'Custom dashboard ranges require startDate and endDate')
-    const from = startOfDay(new Date(query.startDate))
-    const to = endOfDay(new Date(query.endDate))
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) throw new AppError(422, 'Invalid dashboard date range')
+    const startParsed = parseBusinessDateTime(query.startDate)
+    const endParsed = parseBusinessDateTime(query.endDate)
+    if (!startParsed || !endParsed || startParsed > endParsed) throw new AppError(422, 'Invalid dashboard date range')
+    const { from, to } = resolveBusinessDateRange('custom', query.startDate, query.endDate)
     return { from, to, preset, bucket: to.getTime() - from.getTime() <= 31 * 86400000 ? '%Y-%m-%d' : '%Y-%m' }
   }
-  const today = startOfDay(now)
-  if (preset === 'today') return { from: today, to: endOfDay(today), preset, bucket: '%Y-%m-%d' }
-  if (preset === 'this_week') {
-    const from = new Date(today)
-    from.setDate(from.getDate() - ((from.getDay() + 6) % 7))
-    return { from, to: endOfDay(new Date(from.getTime() + 6 * 86400000)), preset, bucket: '%Y-%m-%d' }
-  }
-  if (preset === 'last_month') {
-    const from = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-    const to = new Date(today.getFullYear(), today.getMonth(), 0)
-    return { from, to: endOfDay(to), preset, bucket: '%Y-%m-%d' }
-  }
-  const from = new Date(today.getFullYear(), today.getMonth(), 1)
-  return { from, to: endOfDay(new Date(today.getFullYear(), today.getMonth() + 1, 0)), preset: 'this_month', bucket: '%Y-%m-%d' }
+  const normalizedPreset = preset === 'today' || preset === 'this_week' || preset === 'last_month' ? preset : 'this_month'
+  const { from, to } = resolveBusinessDateRange(normalizedPreset)
+  return { from, to, preset: normalizedPreset, bucket: '%Y-%m-%d' }
 }
 
 async function scopeFor(user: AuthUser) {
@@ -74,7 +52,7 @@ export async function getDashboardSummary(user: AuthUser, query: DashboardQuery 
     Visit.countDocuments(periodFilter),
     Visit.aggregate([
       { $match: periodFilter },
-      { $group: { _id: { $dateToString: { format: range.bucket, date: '$plannedDate' } }, visits: { $sum: 1 }, completed: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, 1, 0] } } } },
+      { $group: { _id: { $dateToString: { format: range.bucket, date: '$plannedDate', timezone: BUSINESS_TIMEZONE } }, visits: { $sum: 1 }, completed: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, 1, 0] } } } },
       { $sort: { _id: 1 } },
       { $limit: 366 },
     ]),

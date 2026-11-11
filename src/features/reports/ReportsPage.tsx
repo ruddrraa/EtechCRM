@@ -5,6 +5,7 @@ import { Card } from '../../components/ui/Card'
 import { EmptyState, ErrorState, LoadingState } from '../../components/ui/States'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { apiFetch } from '../../lib/api'
+import { formatIstDate, formatIstDateTime, getDefaultReportFilterState } from '../../lib/timezone'
 import { useAuth } from '../auth/AuthContext'
 
 type Option = { _id: string; name?: string; organisationName?: string; category?: string; designation?: string }
@@ -14,7 +15,7 @@ type ReportResponse = { items: Visit[]; page: number; pages: number; total: numb
 const presets = [['today', 'Today'], ['this_week', 'This week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['custom', 'Custom range']] as const
 const statuses = ['', 'ASSIGNED', 'COMPLETED', 'CANCELLED']
 
-function timeText(value?: string) { return value ? new Date(value).toLocaleString() : '—' }
+function timeText(value?: string) { return formatIstDateTime(value) }
 function locationText(value?: Location) {
   if (!value || value.locationStatus === 'LOCATION_UNAVAILABLE') return '—'
   if (value.latitude === undefined || value.longitude === undefined) return '—'
@@ -33,9 +34,10 @@ export function ReportsPage() {
   const [headId, setHeadId] = useState('')
   const [category, setCategory] = useState('')
   const [status, setStatus] = useState('')
-  const [preset, setPreset] = useState('this_month')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [initialFilter] = useState(() => getDefaultReportFilterState())
+  const [preset, setPreset] = useState<string>(initialFilter.preset)
+  const [startDate, setStartDate] = useState<string>(initialFilter.startDate)
+  const [endDate, setEndDate] = useState<string>(initialFilter.endDate)
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState<'plannedDate' | 'clientName' | 'executiveName'>('plannedDate')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
@@ -62,7 +64,7 @@ export function ReportsPage() {
     if (fromMaster.length > 0) return fromMaster
     return [...new Set((clients.data?.items ?? []).map((item) => item.category).filter(Boolean))] as string[]
   }, [categoriesQuery.data, clients.data])
-  const reset = () => { setPreset('this_month'); setStartDate(''); setEndDate(''); setStatus(''); setCategory(''); setClientId(''); setStaffId(''); setHeadId(''); setClientSearch(''); setStaffSearch(''); setPage(1) }
+  const reset = () => { const defaults = getDefaultReportFilterState(); setPreset(defaults.preset); setStartDate(defaults.startDate); setEndDate(defaults.endDate); setStatus(''); setCategory(''); setClientId(''); setStaffId(''); setHeadId(''); setClientSearch(''); setStaffSearch(''); setPage(1) }
   const changeSort = (next: typeof sort) => { setOrder(sort === next && order === 'desc' ? 'asc' : 'desc'); setSort(next); setPage(1) }
   async function download(format: 'csv' | 'xlsx' | 'pdf') {
     setExporting(format); setExportError('')
@@ -92,7 +94,7 @@ export function ReportsPage() {
 function ReportTable({ segment, visits, sort, order, onSort }: { segment: 'client' | 'staff'; visits: Visit[]; sort: string; order: string; onSort: (sort: 'plannedDate' | 'clientName' | 'executiveName') => void }) {
   const sortable = (label: string, value: 'plannedDate' | 'clientName' | 'executiveName') => <button className="table-sort" onClick={() => onSort(value)}>{label}{sort === value && (order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</button>
   if (!visits.length) return <EmptyState title="No visits found" description="No records match the selected filters." />
-  return <div className="report-table-scroll"><table className="report-table"><thead><tr>{segment === 'client' ? <th>Client Name</th> : <th>{sortable('Executive Name', 'executiveName')}</th>} {segment === 'staff' && <th>{sortable('Client Name', 'clientName')}</th>}<th>{sortable('Visit Date', 'plannedDate')}</th><th>Check-in Time</th><th>Check-out Time</th><th>Coordinates</th><th>Location</th>{segment === 'client' && <th>{sortable('Executive Name', 'executiveName')}</th>}{segment === 'staff' && <th>Marketing Head</th>}<th>Remarks</th><th>Follow-up Date</th></tr></thead><tbody>{visits.map((visit) => <tr key={visit._id}><td>{segment === 'client' ? visit.client.organisationName : visit.assignedTo.name}</td>{segment === 'staff' && <td>{visit.client.organisationName}</td>}<td>{new Date(visit.plannedDate).toLocaleDateString()} <StatusBadge status={visit.status} /></td><td>{timeText(visit.checkIn?.recordedAt)}</td><td>{timeText(visit.checkOut?.recordedAt)}</td><td><span className="report-coordinates">In: {locationText(visit.checkIn)}<br />Out: {locationText(visit.checkOut)}</span></td><td>{visit.client.address ?? '—'}</td>{segment === 'client' && <td>{visit.assignedTo.name}</td>}{segment === 'staff' && <td>{visit.marketingHead?.name ?? '—'}</td>}<td>{visit.remarks ?? '—'}</td><td>{visit.followUpDate ? new Date(visit.followUpDate).toLocaleDateString() : '—'}</td></tr>)}</tbody></table></div>
+  return <div className="report-table-scroll"><table className="report-table"><thead><tr>{segment === 'client' ? <th>Client Name</th> : <th>{sortable('Executive Name', 'executiveName')}</th>} {segment === 'staff' && <th>{sortable('Client Name', 'clientName')}</th>}<th>{sortable('Visit Date', 'plannedDate')}</th><th>Check-in Time</th><th>Check-out Time</th><th>Coordinates</th><th>Location</th>{segment === 'client' && <th>{sortable('Executive Name', 'executiveName')}</th>}{segment === 'staff' && <th>Marketing Head</th>}<th>Remarks</th><th>Follow-up Date</th></tr></thead><tbody>{visits.map((visit) => <tr key={visit._id}><td>{segment === 'client' ? visit.client.organisationName : visit.assignedTo.name}</td>{segment === 'staff' && <td>{visit.client.organisationName}</td>}<td>{formatIstDateTime(visit.plannedDate)} <StatusBadge status={visit.status} /></td><td>{timeText(visit.checkIn?.recordedAt)}</td><td>{timeText(visit.checkOut?.recordedAt)}</td><td><span className="report-coordinates">In: {locationText(visit.checkIn)}<br />Out: {locationText(visit.checkOut)}</span></td><td>{visit.client.address ?? '—'}</td>{segment === 'client' && <td>{visit.assignedTo.name}</td>}{segment === 'staff' && <td>{visit.marketingHead?.name ?? '—'}</td>}<td>{visit.remarks ?? '—'}</td><td>{formatIstDate(visit.followUpDate)}</td></tr>)}</tbody></table></div>
 }
 
 function StatusBadge({ status }: { status: string }) {
